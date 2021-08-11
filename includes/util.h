@@ -126,4 +126,22 @@ static inline int writen(long fd, void *buf, size_t size) {
     return 1;
 }
 
+/**
+ * @brief Restituisce la stringa nel formato [hh:mm:ss] 
+ */
+static inline char * tStamp(char * timeString) {
+    struct tm *tmp;
+    time_t curtime;
+    time(&curtime);
+    if((tmp = localtime(&curtime)) == NULL ){
+        perror("localtime");
+        return NULL;
+    }
+    if((strftime(timeString, 11, "[%H:%M:%S]", tmp)) == 0) {
+        perror("strftime");
+        return NULL;
+    }
+    return timeString;
+}
+
 #endif /* UTIL_H */

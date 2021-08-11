@@ -12,11 +12,13 @@
 #include <util.h>
 #include <mydata.h>
 
+char timestr[11]; //usata per il timestamp nel file di log
+
 void handler_openfile(long fd, icl_hash_t * table, void * key, int flag) {
 
 	int ret, retval = 0;
 	file_t * data;
-	if(flag == O_CREATE) {
+	if(flag == O_CREATE || flag == (O_CREATE | O_LOCK)) {
 		CHECK_EQ_EXIT("malloc", NULL,(data = malloc(sizeof(file_t))), "allocando un nuovo file", "");
 		data->contenuto = NULL;
 		data->file_size = 0;
@@ -35,6 +37,10 @@ void handler_openfile(long fd, icl_hash_t * table, void * key, int flag) {
 			retval = -1;
 		}
 	}
+
+
+
+
 	else {
 		data = icl_hash_find(table, key);
 		if(data == NULL) {
@@ -60,7 +66,11 @@ void handler_writefile(long fd, icl_hash_t * table, void * key) {
 		memcpy(data->contenuto, buf, sz);
 		data->file_size = sz;
 	}
-	if(retval == 0) printf("file salvato con successo sul server\n");
+	if(retval == 0) fprintf(stdout, "%s[LOG] Writed file %s (%d Bytes)\n", tStamp(timestr), (char*)key, (int)sz);
+
+	CUR_CAP = CUR_CAP + sz;
+	CUR_FIL++;
+
 	SYSCALL_EXIT("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
 }
 
@@ -73,6 +83,8 @@ void handler_readfile(long fd, icl_hash_t * table, void * key) {
 	if(retval == 0) {
 		SYSCALL_EXIT("write", ret, writen(fd, &(data->file_size), sizeof(size_t)), "inviando dati al client", "");
 		SYSCALL_EXIT("write", ret, writen(fd, data->contenuto, data->file_size), "inviando dati al client", "");
+
+		fprintf(stdout, "%s[LOG] Read file %s (%d Bytes)\n", tStamp(timestr), (char*)key, (int)data->file_size);
 	}
 }
 
@@ -92,6 +104,7 @@ void workerF(void *arg) {
 
     	case CLOSE_CONNECTION:
     		close(connfd);
+    		fprintf(stdout, "%s[LOG] Closed connection (client ?)\n", tStamp(timestr));
     		break;
 
     	case OPEN_FILE:

@@ -4,6 +4,14 @@
 #include <signal.h>
 #include <icl_hash.h>
 
+#define O_CREATE 1
+#define O_LOCK 2
+
+extern long MAX_CAP;
+extern long CUR_CAP;
+extern long MAX_FIL;
+extern long CUR_FIL;
+
 //usata all'avvio del server per salvare i valori di configurazione
 typedef struct {
 	char*	sock_name;
@@ -45,12 +53,6 @@ typedef struct {
 
 //enumerazioni usate per maggiore legibilita' del codice
 //nello scambio di informazioni tra client e server
-enum {
-    O_CREATE        = 1,
-    O_LOCK          = 2,
-    O_CREATE_LOCK   = 3
-};
-
 enum {
     CLOSE_CONNECTION    = 0,
     OPEN_FILE           = 1,

@@ -17,7 +17,7 @@
 #endif
 
 #if !defined(RETRY_TIME_MS)
-#define RETRY_TIME_MS 5
+#define RETRY_TIME_MS 500
 #endif
 
 void usage(void);
@@ -71,7 +71,7 @@ int main(int argc, char *argv[]) {
 				}
 				token = strtok_r(optarg, ",", &save);
 				do{
-					r = openFile(token, O_CREATE);
+					r = openFile(token, O_CREATE | O_LOCK);
 					if(r == 0) writeFile(token, NULL);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);

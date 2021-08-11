@@ -81,6 +81,9 @@ config_t * read_config(char * conf_path) {
 	//MEMORY SIZE (i=4)
 	conf->mem_bytes = strtol(bufptr[4], NULL, 10);
 
+	MAX_CAP = conf->mem_bytes;
+	MAX_FIL = conf->mem_files;
+
 	for(int j=0; j<i; j++) free(bufptr[j]);
 	free(bufptr);
 	return conf;

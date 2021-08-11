@@ -29,6 +29,13 @@
 volatile int termina = 0;
 volatile int hangup = 0;
 
+long MAX_CAP = 0;
+long CUR_CAP = 0;
+long MAX_FIL = 0;
+long CUR_FIL = 0;
+
+char timestr[11]; //usata per il timestamp nel file di log
+
 static void *sigHandler(void *arg) {
 	sigset_t *set = ((sigHandler_t*)arg)->set;
     int fd_pipe = ((sigHandler_t*)arg)->signal_pipe;
@@ -45,7 +52,7 @@ static void *sigHandler(void *arg) {
 			case SIGINT:
 			case SIGTERM:
 			case SIGQUIT:
-				printf("ricevuto segnale %s, esco\n", (sig==SIGINT) ? "SIGINT": ((sig==SIGTERM)?"SIGTERM":"SIGQUIT") );
+				//printf("ricevuto segnale %s, esco\n", (sig==SIGINT) ? "SIGINT": ((sig==SIGTERM)?"SIGTERM":"SIGQUIT") );
 	   			close(fd_pipe); 
 	    		return NULL;
 			case SIGHUP:
@@ -146,6 +153,7 @@ int main(int argc, char* argv[]) {
 	/* BLOCCO SELECT */
 	char buf[BUFSIZE];
 	int n;
+	int client_num = 0;
 
 	fd_set set, tmpset;
     FD_ZERO(&set);
@@ -203,6 +211,8 @@ int main(int argc, char* argv[]) {
 		  				termina = 1;
 		  				break;
 		  			}
+		  			fprintf(stdout, "%s[LOG] Opened connection (client %d)\n", tStamp(timestr), client_num++);
+					
 
 					if(hangup){
 						printf("SERVER SHUTTING DOWN... impossibile eseguire nuove richieste\n"); //DA TESTARE
@@ -266,6 +276,10 @@ int main(int argc, char* argv[]) {
 		}//end for
 	}//end while
     /* FINE BLOCCO SELECT */
+
+	fprintf(stdout, "\n[SERVER CLOSING] memory occupied: %ld\n"
+		"[SERVER CLOSING] files in memory: %ld\n", CUR_CAP, CUR_FIL);
+
 
     destroyThreadPool(pool, 0); 
     icl_hash_destroy(hash, NULL, free);
