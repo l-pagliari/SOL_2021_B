@@ -20,10 +20,33 @@
 #include <mydata.h>
 #include <util.h>
 
-#define MAX_FILE_LEN 1024*1024*5 //5MB
-
 long connfd;
 char *socket_name;
+
+//inizializza la richiesta da mandare al server
+//NON SO SE VA AGGIUNTA DIRNAME, AGGIORNARE IN SEGUITO
+request_t * initRequest(int t, const char * fname, int n){
+	request_t * req;
+	if((req = malloc(sizeof(request_t))) == NULL) {
+		perror("malloc");
+		return NULL;
+	}
+	req->type = t;
+	req->cid = getpid();
+	req->arg = n;
+	if(fname != NULL){
+		//devo ricavare il path assoluto del file
+		char abs_path[PATH_MAX];
+		char *ptr = NULL;
+		if((ptr = realpath(fname, abs_path)) == NULL) {
+			fprintf(stderr, "%s non esiste\n", fname);
+			errno = EINVAL;
+			return NULL;
+		}
+		strncpy(req->filepath, abs_path, PATH_MAX);
+	}
+	return req;
+}
 
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
 
@@ -48,9 +71,16 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     		return -1;
 		}
     }
-    connfd = sockfd;
+    int ret;
+    request_t * rts;
+    rts = initRequest(OPEN_CONNECTION, NULL, 0);
+    if(rts == NULL) return -1;
+    SYSCALL_RETURN("write", ret, writen(sockfd, rts, sizeof(request_t)), "inviando dati al server", "");
+
+	connfd = sockfd;
     socket_name = malloc(strlen(sockname)*sizeof(char));
     strncpy(socket_name, sockname, strlen(sockname));
+    free(rts);
 	return 0;
 }
 
@@ -59,111 +89,88 @@ int closeConnection(const char *sockname) {
 		errno = EINVAL;
 		return -1;
 	}
+	request_t * rts;
+	rts = initRequest(CLOSE_CONNECTION, NULL, 0);
+	if(rts == NULL) return -1;
 	int ret;
-	request_t * request;
-	if((request = malloc(sizeof(request_t))) == NULL) {
-		perror("malloc");
-		return -1;
-	}
-	request->type = CLOSE_CONNECTION;
-	SYSCALL_RETURN("write", ret, writen(connfd, request, sizeof(request_t)), "inviando dati al server", "");
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+
 	close(connfd);
 	connfd = -1;
   	if(socket_name) free(socket_name);
+  	free(rts);
 	return 0;
 }
 
 int openFile(const char *pathname, int flags) {
-	
-	char abs_path[PATH_MAX];
-	char *ptr;
-	if((ptr = realpath(pathname, abs_path)) == NULL) {
-		fprintf(stderr, "%s non esiste\n", pathname);
-		errno = EINVAL;
-		return -1;
-	}
+
 	int ret, retval;
-	request_t * request;
-	if((request = malloc(sizeof(request_t))) == NULL) {
-		perror("malloc");
-		return -1;
-	}
-	request->type = OPEN_FILE;
-	strncpy(request->path, abs_path, PATH_MAX);
-	request->flag = flags;
-	SYSCALL_RETURN("write", ret, writen(connfd, request, sizeof(request_t)), "inviando dati al server", "");
+	request_t * rts;
+	rts = initRequest(OPEN_FILE, pathname, flags);
+	if(rts == NULL) return -1;
+
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati al server", "");
+	free(rts);
 	return retval;
 }
 
 int writeFile(const char *pathname, const char *dirname) {
 
-	char abs_path[PATH_MAX];
-	char *ptr;
-	if((ptr = realpath(pathname, abs_path)) == NULL) {
-		fprintf(stderr, "%s non esiste\n", pathname);
-		errno = EINVAL;
-		return -1;
-	}
 	int ret, retval;
-	request_t * request;
-	if((request = malloc(sizeof(request_t))) == NULL) {
-		perror("malloc");
-		return -1;
-	}
-	request->type = WRITE_FILE;
-	strncpy(request->path, abs_path, PATH_MAX);
-	SYSCALL_RETURN("write", ret, writen(connfd, request, sizeof(request_t)), "inviando dati al server", "");
-
-	//PARTE WRITE
-
+	request_t * rts;
+	rts = initRequest(WRITE_FILE, pathname, 0);
+	if(rts == NULL) return -1;
+	
+	/*	PARTE READ
+	*   non sapendo a priori le dimensioni dei file che andranno nello storage ho deciso
+	*	di utilizzare stat per sapere esattamente la dimensione del file da leggere per inizializzare 
+	*	il buffer e comunicare la size precisa al server
+	*/
 	FILE *fp;
-	if((fp = fopen(abs_path, "r")) == NULL) {
+	char *buffer;
+	size_t fsize, num;
+	struct stat statbuf;
+
+	SYSCALL_RETURN("stat", ret, stat(pathname, &statbuf), "facendo la stat del file in lettura", "");
+	if((fp = fopen(pathname, "r")) == NULL) {
 		perror("fopen");
 		return -1;
 	}
-	char *buffer; 
-	buffer = malloc(MAX_FILE_LEN);
-	if(buffer) {
-		size_t f_size = fread(buffer, sizeof(char), MAX_FILE_LEN, fp); 
-		//lo riduco perche' solitamente e' minore
-		void *tmp = realloc(buffer, f_size+1); 
-		if(tmp){
-			buffer = tmp;
-			buffer[f_size+1] = '\0'; //usiamo il contenuto dei file come stringhe nei test
-			SYSCALL_RETURN("write", ret, writen(connfd, &f_size, sizeof(size_t)), "inviando dati al server", "");
-			SYSCALL_RETURN("write", ret, writen(connfd, buffer, f_size), "inviando dati al server", "");
-		}
-		free(buffer);
-	}
-	fclose(fp);
-	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-	return retval;
-}
-
-//una volta che usiamo questa funzione sappiamo che il file esiste nel server
-int readFile(const char* pathname, void** buf, size_t* size) {
-
-	char abs_path[PATH_MAX];
-	char *ptr;
-	if((ptr = realpath(pathname, abs_path)) == NULL) {
-		fprintf(stderr, "%s non esiste\n", pathname);
-		errno = EINVAL;
-		return -1;
-	}
-	int ret, retval;
-	request_t * request;
-	if((request = malloc(sizeof(request_t))) == NULL) {
+	fsize = statbuf.st_size;
+	if((buffer = malloc(fsize)) == NULL) {
 		perror("malloc");
 		return -1;
 	}
-	request->type = READ_FILE;
-	strncpy(request->path, abs_path, PATH_MAX);
-	SYSCALL_RETURN("write", ret, writen(connfd, request, sizeof(request_t)), "inviando dati al server", "");
+	num = fread(buffer, 1, fsize, fp);
+	if(num != fsize) {
+		fprintf(stderr, "errore nella lettura del file\n");
+		return -1;
+	}
+	fclose(fp);
+	//invio la richiesta ed il file al server, leggo l'esito
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	SYSCALL_RETURN("write", ret, writen(connfd, &fsize, sizeof(size_t)), "inviando dati al server", "");
+	SYSCALL_RETURN("write", ret, writen(connfd, buffer, fsize), "inviando dati al server", "");
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+
+	free(buffer);
+	free(rts);
+	return retval;
+}
+
+int readFile(const char* pathname, void** buf, size_t* size) {
+
+	int ret, retval;
+	request_t * rts;
+	rts = initRequest(READ_FILE, pathname, 0);
+	if(rts == NULL) return -1;
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 
 	//PARTE READ
-	
+	//retval mi dice se il file esiste o meno nel server
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+
 	if(retval == 0) {
 		SYSCALL_RETURN("read", ret, readn(connfd, size, sizeof(size_t)), "ricevendo dati dal server", ""); 
 		void* buf2 = malloc(*size);
@@ -177,5 +184,6 @@ int readFile(const char* pathname, void** buf, size_t* size) {
 				"----------------------------------------\n", pathname, (int) *size, (char*)buf2); 
 		(*buf) = buf2;
 	}
+	free(rts);
 	return retval;
 }

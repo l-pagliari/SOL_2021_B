@@ -29,39 +29,42 @@ typedef struct {
 
 //usata per passare i dati utili dal manager thread al worker thread
 typedef struct {
-    long clientfd;
-    int pipe;
-    icl_hash_t * hash_table;
+    long        clientfd;
+    int         pipe;
+    icl_hash_t* hash_table;
 } workerArg_t;
 
-//VANNO RIVISTI
+
 typedef struct {
-    int type;
-    char path[PATH_MAX];
-    int flag;
+    int     type;
+    int     arg;
+    pid_t   cid;
+    char    filepath[PATH_MAX];
+    //char    dirpath[PATH_MAX]; non sono sicuro serva
 } request_t;
 
 typedef struct {
-    void *contenuto;
-    size_t file_size;
+    void*           contenuto;
+    char*           file_name;
+    size_t          file_size;
+    int             lock_flag;
+    pid_t           locked_by;
     pthread_mutex_t lock;
-    pthread_cond_t cond;
-    char * file_name;
-    int lock_flag;
-    pid_t locked_by;
+    pthread_cond_t  cond;
 } file_t;
 
 //enumerazioni usate per maggiore legibilita' del codice
 //nello scambio di informazioni tra client e server
 enum {
-    CLOSE_CONNECTION    = 0,
-    OPEN_FILE           = 1,
-    WRITE_FILE          = 2,
-    READ_FILE           = 3,
-    READ_N              = 4,
-    REMOVE_FILE         = 5,
-    LOCK_FILE           = 6,
-    UNLOCK_FILE         = 7
+    OPEN_CONNECTION     = 0,
+    CLOSE_CONNECTION    = 1,
+    OPEN_FILE           = 2,
+    WRITE_FILE          = 3,
+    READ_FILE           = 4
+    //READ_N              = 4,
+    //REMOVE_FILE         = 5,
+    //LOCK_FILE           = 6,
+    //UNLOCK_FILE         = 7
 };
 
 #endif /* MY_DATA_H */

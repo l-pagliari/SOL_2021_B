@@ -54,9 +54,11 @@ int main(int argc, char *argv[]) {
 					exit(EXIT_FAILURE);
 				}
 				strncpy(sockname, optarg, strlen(optarg));
+
 				struct timespec timeout;
 				timeout.tv_sec = MAX_WAIT_TIME_SEC;
 				int retry = RETRY_TIME_MS;
+				
 				if((r = openConnection(sockname, retry, timeout)) == -1) { //API
 					perror("openConnection");
 					exit(EXIT_FAILURE);
@@ -79,17 +81,14 @@ int main(int argc, char *argv[]) {
 
 			case 'r':
 				if(connection_established == 0) {
-					fprintf(stderr, "connesione non stabilita\n");
+					fprintf(stderr, "connesione non stabilita, usare -h per aiuto\n");
 					exit(EXIT_FAILURE);
 				}
 				token = strtok_r(optarg, ",", &save);
 				do{
-					r = openFile(token, 0);
-					if(r == 0) {
-						readFile(token, &memptr, &fsize);
-						//if(saveread) saveFile(read_dir, token, memptr, fsize);
-						if(memptr) free(memptr);
-					}
+					readFile(token, &memptr, &fsize);
+					//if(saveread) saveFile(read_dir, token, memptr, fsize);
+					if(memptr) free(memptr);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);	
 				break;
