@@ -19,6 +19,8 @@
 #include <icl_hash.h>
 #include <limits.h>
 
+
+
 #define BITS_IN_int     ( sizeof(int) * CHAR_BIT )
 #define THREE_QUARTERS  ((int) ((BITS_IN_int * 3) / 4))
 #define ONE_EIGHTH      ((int) (BITS_IN_int / 8))
@@ -279,6 +281,41 @@ int icl_hash_destroy(icl_hash_t *ht, void (*free_key)(void*), void (*free_data)(
 
     return 0;
 }
+
+int get_n_entries( icl_hash_t *ht, int n, void ** data_arr) {
+
+    icl_entry_t *bucket, *curr;
+    int i;
+    int j=0;
+
+    if(!ht || n==0) return -1;
+
+    for(i=0; i<ht->nbuckets; i++) {
+        bucket = ht->buckets[i];
+        for(curr=bucket; curr!=NULL; ) {
+            if(curr->key) {
+               // printf("TEST: curr->key = %s\n", (char*)curr->key);
+                //printf("TEST: curr->data = %p\n", curr->data);
+                //printf("TEST: data_arr[j] = %p\n", data_arr[j]);
+                data_arr[j] = curr->data;
+                //printf("TEST: data_arr[j] = %p\n", data_arr[j]);
+                j++;
+                if(j==n) break;
+            }
+            curr=curr->next;
+        }
+        if(j==n) break;
+    }
+    return j;
+
+    //NON SERVE ALLOCARE LA MEMORIA DEI SINGOLI COSI? BASTA LA REFERENCE ALL'AREA DI MEMORIA? PROVIAMO.
+
+
+}
+
+
+
+
 
 /**
  * Dump the hash table's contents to the given file pointer.

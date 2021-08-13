@@ -60,8 +60,8 @@ enum {
     CLOSE_CONNECTION    = 1,
     OPEN_FILE           = 2,
     WRITE_FILE          = 3,
-    READ_FILE           = 4
-    //READ_N              = 4,
+    READ_FILE           = 4,
+    READ_N_FILES        = 5
     //REMOVE_FILE         = 5,
     //LOCK_FILE           = 6,
     //UNLOCK_FILE         = 7

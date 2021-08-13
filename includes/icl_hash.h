@@ -57,6 +57,11 @@ string_compare(void* a, void* b);
 int hash_dump_n(FILE* stream, icl_hash_t* ht, int n);
 
 
+/* funzione aggiunta per gestire la funzionalita' read_n_files */
+
+int get_n_entries( icl_hash_t *ht, int n, void ** data_arr);
+
+
 #define icl_hash_foreach(ht, tmpint, tmpent, kp, dp)    \
     for (tmpint=0;tmpint<ht->nbuckets; tmpint++)        \
         for (tmpent=ht->buckets[tmpint];                                \

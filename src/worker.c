@@ -91,6 +91,59 @@ void handler_readfile(long fd, icl_hash_t * table, void * key) {
 		SYSCALL_EXIT("write", ret, writen(fd, data->contenuto, data->file_size), "inviando dati al client", "");
 		fprintf(stdout, "%s[LOG] Read file %s (%d Bytes)\n", tStamp(timestr), (char*)key, (int)data->file_size);
 	}
+} 
+
+void handler_read_n_files(long fd, icl_hash_t * table, int N) { 
+	void **file_array = NULL;
+	int unused, num, i;
+	int end = 0;
+
+	if(table->nentries != 0) {	//caso limite
+		//due casi possibili:
+		//1. N==0 o N>=entries --> devo leggere tutti i file contenuti in memoria
+		//2. N<entries 		   --> devo leggere N file a caso dalla memoria
+		if(N == 0 || (N > table->nentries)) 
+			 num = table->nentries;
+		else num = N;
+		//inizializzo l'array di file vuoto
+		if((file_array = malloc(N*sizeof(void*))) == NULL){
+			perror("malloc");
+			exit(EXIT_FAILURE);
+		}
+		//inzializzo a null i pointers
+		for(i=0; i<num; i++){
+			file_array[i] = NULL;
+		}
+		//riempio l'array di num file
+		if(get_n_entries(table, num, file_array) == -1) {
+			fprintf(stderr, "errore nella funzione get_n_entries\n");
+			exit(EXIT_FAILURE);
+		}
+		file_t * newfile;
+		size_t name_len;
+		char synch;
+		//invio i file al client
+		for(i=0; i<num; i++){
+			newfile = file_array[i];
+			name_len = strlen(newfile->file_name);
+			//invio che c'e' un nuovo file in arrivo
+			SYSCALL_EXIT("write", unused, writen(fd, &end, sizeof(int)), "inviando dati al client", "");
+			//invio il nome del file
+			SYSCALL_EXIT("write", unused, writen(fd, &name_len, sizeof(size_t)), "inviando dati al client", "");
+			SYSCALL_EXIT("write", unused, writen(fd, newfile->file_name, name_len), "inviando dati al client", "");
+			//invio il contenuto
+			SYSCALL_EXIT("write", unused, writen(fd, &newfile->file_size, sizeof(size_t)), "inviando dati al client", "");
+			SYSCALL_EXIT("write", unused, writen(fd, newfile->contenuto, newfile->file_size), "inviando dati al client", "");
+
+			fprintf(stdout, "%s[LOG] Read file %s (%d Bytes)\n", tStamp(timestr), newfile->file_name, (int)newfile->file_size);
+
+			//leggo un byte per sapere che il client ha ricevuto il file
+			SYSCALL_EXIT("read", unused, read(fd, &synch, 1), "leggendo dati dal client", "");
+		}
+	}	
+	end = 1;
+	SYSCALL_EXIT("write", unused, writen(fd, &end, sizeof(int)), "inviando dati al client", "");
+	if(file_array) free(file_array);
 }
 
 void workerF(void *arg) {
@@ -129,6 +182,11 @@ void workerF(void *arg) {
     	//free(req) non fa funzionare la read per qualche ragione
     	case READ_FILE:
     		handler_readfile(connfd, htab, req->filepath);
+    		SYSCALL_EXIT("write", notused, write(req_pipe, &connfd, sizeof(long)), "scrivendo nella request pipe", "");
+    		break;
+
+    	case READ_N_FILES:
+    		handler_read_n_files(connfd, htab, req->arg);
     		SYSCALL_EXIT("write", notused, write(req_pipe, &connfd, sizeof(long)), "scrivendo nella request pipe", "");
     		break;
     }

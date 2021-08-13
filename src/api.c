@@ -159,6 +159,42 @@ int writeFile(const char *pathname, const char *dirname) {
 	return retval;
 }
 
+/*
+int readFile(const char* pathname, void** buf, size_t* size) {
+
+	int ret, retval;
+	request_t * rts;
+	rts = initRequest(READ_FILE, pathname, 0);
+	if(rts == NULL) return -1;
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+
+	if(retval == 0) {
+		
+		void* buf2;
+		SYSCALL_RETURN("read", ret, readn(connfd, size, sizeof(size_t)), "ricevendo dati dal server", ""); 
+		if((buf2 = malloc(*size)) == NULL ) {
+			perror("malloc");
+			return -1;
+		} 
+		SYSCALL_RETURN("read", ret, readn(connfd, buf2, *size), "ricevendo dati dal server", "");
+
+		file_t * readfile;
+		readfile = buf2;
+		printf("[CLIENT] Letto file: %s (dim: %d Bytes)\n", (char*)readfile->contenuto, (int)readfile->file_size);
+
+
+
+		printf("FILE RICHIESTO (%s) (dim: %dbytes):\n"
+				"----------------------------------------\n%s"
+				"----------------------------------------\n", pathname, (int) *size, (char*)buf2); 
+		(*buf) = buf2;
+	}
+	free(rts);
+	return retval;
+} */
+
 int readFile(const char* pathname, void** buf, size_t* size) {
 
 	int ret, retval;
@@ -178,12 +214,135 @@ int readFile(const char* pathname, void** buf, size_t* size) {
 			perror("malloc");
 			return -1;
 		}
-		SYSCALL_RETURN("readn", ret, readn(connfd, buf2, *size), "ricevendo dati dal server", "");
+		SYSCALL_RETURN("read", ret, readn(connfd, buf2, *size), "ricevendo dati dal server", "");
+		//STAMPA A FINI DI TEST
 		printf("FILE RICHIESTO (%s) (dim: %dbytes):\n"
 				"----------------------------------------\n%s"
-				"----------------------------------------\n", pathname, (int) *size, (char*)buf2); 
+				"----------------------------------------\n", pathname, (int) *size, (char*)buf2);
 		(*buf) = buf2;
 	}
 	free(rts);
 	return retval;
+}
+
+//WORK IN PROGRESS
+int readNFiles(int N, const char* dirname) {
+	int ret;
+	request_t * rts;
+	rts = initRequest(READ_N_FILES, NULL, N);
+	if(rts == NULL) return -1;
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+
+	//PARTE READ N
+	int end, count = 0;
+	size_t fsize, namelen;
+	char *fname = NULL;
+	char *buf = NULL;
+
+	//per qualche ragione le realloc non funzionano se non faccio prima una malloc
+	//fixare in seguito se rimane tempo
+	fname = malloc(64);
+		if(fname == NULL) {
+			perror("malloc");
+			return -1;
+		}
+	buf = malloc(64);
+		if(buf == NULL) {
+			perror("malloc");
+			return -1;
+		}
+	char synch = 's';
+
+	//non so a priori quanti file sono presenti sul server, devo essere notificato
+	SYSCALL_RETURN("read", ret, readn(connfd, &end, sizeof(int)), "ricevendo dati dal server", ""); 
+	while(!end){
+		//leggo il nome del file
+		SYSCALL_RETURN("read", ret, readn(connfd, &namelen, sizeof(size_t)), "ricevendo dati dal server", "");
+		if(realloc(fname, namelen+1) == NULL){
+			perror("realloc");
+			return -1;
+		}
+		SYSCALL_RETURN("read", ret, readn(connfd, fname, namelen), "ricevendo dati dal server", "");
+		fname[namelen] = '\0'; //per la stampa del nome, in caso del salvataggio 
+
+		//leggo il contenuto del file
+		SYSCALL_RETURN("read", ret, readn(connfd, &fsize, sizeof(size_t)), "ricevendo dati dal server", "");
+		if(realloc(buf, fsize) == NULL) {
+			perror("realloc");
+			return -1;
+		}
+		SYSCALL_RETURN("read", ret, readn(connfd, buf, fsize), "ricevendo dati dal server", ""); 
+
+		//se specificato devo salvare il file
+		if(dirname != NULL) saveFile(dirname, fname, buf, fsize);
+
+		//comunico la fine della lettura
+		SYSCALL_RETURN("write", ret, write(connfd, &synch, 1), "inviando dati al server", "");
+		//leggo se c'e' un altro file in arrivo
+		SYSCALL_RETURN("read", ret, readn(connfd, &end, sizeof(int)), "ricevendo dati dal server", "");
+		count++;
+	}
+	if(count == 0) printf("Nessun file presente sul server\n");
+	if(buf) free(buf);
+	if(fname) free(fname);
+	free(rts);
+	return count;
+}
+
+//API aggiuntiva, salva localmente nella cartella dirname un file con il contenuto puntato dal buffer
+int saveFile(const char* dirname, const char* pathname, void* buf, size_t size) {
+	 
+	//provo a creare la directory, se gia' esiste il file controllo che sia una directory
+	struct stat statbuf;
+	int unused, r;
+	r = mkdir(dirname, 0777);
+	if(r == -1 && errno != EEXIST) {
+		perror("mkdir");
+		return -1;
+	}
+	if(r == -1) {
+		SYSCALL_EXIT(stat, unused, stat(dirname, &statbuf), "facendo la stat di %s\n", dirname);
+		if(!S_ISDIR(statbuf.st_mode)) {
+			fprintf(stderr, "%s non e' una directory\n", dirname);
+			return -1;
+		}
+	}
+	//ricavo il nome da salvare da pathname(formato sconosciuto a priori)
+	char *filepath;
+	size_t len;
+	if(strchr(pathname, '/') != NULL) {
+		char *tmp_str = strdup(pathname);
+		char *bname = basename(tmp_str);
+		len = strlen(dirname)+strlen(bname)+2; //carattere '/' e terminatore
+		filepath = malloc(len);
+		if(filepath == NULL){
+			perror("malloc");
+			return -1;
+		}
+		sprintf(filepath, "%s/%s", dirname, bname);
+	}
+	else {
+		len = strlen(dirname)+strlen(pathname)+2;
+		filepath = malloc(len);
+		if(filepath == NULL){
+			perror("malloc");
+			return -1;
+		}
+		sprintf(filepath, "%s/%s", dirname, pathname);
+	}
+
+	//creo un nuovo file all'interno della directory
+	FILE *fp;
+	if((fp = fopen(filepath, "w+")) == NULL) {
+		perror("fopen");
+		return -1;
+	}
+	if(fwrite(buf, 1, size, fp) != size ) {
+		perror("fwrite");
+		return -1;
+	}
+	printf("[CLIENT] Saved file %s\n", filepath);
+	free(filepath);
+	fclose(fp);
+	return 0;
 }

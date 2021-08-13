@@ -7,6 +7,7 @@
 #include <time.h>
 #include <ctype.h>
 #include <limits.h>
+#include <errno.h>
 
 #include <util.h>
 #include <mydata.h>
@@ -30,13 +31,19 @@ int main(int argc, char *argv[]) {
     }
 	int r;
     int connection_established = 0;
+    int saveread = 0;
     char opt;
-    char *sockname;
+    char *sockname = NULL;
     char *token, *save;
+    char *read_dir = NULL;
     size_t fsize;
     void *memptr = NULL;
+
+   	//usati da strtol in R
+    char *endptr;
+    long val;
     
-    while((opt = getopt(argc, argv, "hf:W:r:")) != -1) {
+    while((opt = getopt(argc, argv, ":hf:W:r:R:d:")) != -1) {
     	switch(opt) {
 			
 			case 'h': 
@@ -87,17 +94,75 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					readFile(token, &memptr, &fsize);
-					//if(saveread) saveFile(read_dir, token, memptr, fsize);
+					if(saveread) saveFile(read_dir, token, memptr, fsize);
 					if(memptr) free(memptr);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);	
 				break;
-		}
+
+			case 'R':
+				if(connection_established == 0) {
+					fprintf(stderr, "connesione non stabilita\n");
+					exit(EXIT_FAILURE);
+				}
+				//input nella forma n=7, faccio un controllo sull'input utilizzando strtol
+				errno = 0;
+				val = strtol(optarg+2, &endptr, 10);
+				if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+               		perror("strtol");
+               		exit(EXIT_FAILURE);
+           		}
+				if (endptr == optarg+2 || val < 0) {
+               		fprintf(stderr, "input errato, usare -h per aiuto\n");
+               		exit(EXIT_FAILURE);
+           		}
+				//read_dir != NULL indica che vogliamo memorizzare i file letti
+				//il cast per l'uso realistico non dovrebbe causare problemi, in caso si puo' usare atoi con un altro errchecking
+				readNFiles((int)val, read_dir);
+				break;
+
+			//directory dove salvare localmente i file letti dal server
+			case 'd':
+				if(saveread == 0){
+					if((read_dir = malloc(strlen(optarg))) == NULL) {
+						perror("malloc");
+						exit(EXIT_FAILURE);
+					}
+					strncpy(read_dir, optarg, strlen(optarg));
+					saveread = 1;
+				}
+				else {
+					fprintf(stderr, "input errato, usare -h per aiuto\n");
+					exit(EXIT_FAILURE);
+				}
+				break;
+			
+			//getopt error handling manuale per gestire gli argomenti opzionali
+			case '?': 
+				fprintf(stderr, "comando non riconosciuto: %c\n", (char)optopt);
+				break; 
+			case ':':
+				//l'argomento di R e' opzionale, gestisco personalmente l'errore
+				if(optopt == 'R') {
+					if(connection_established == 0) {
+						fprintf(stderr, "connesione non stabilita\n");
+						exit(EXIT_FAILURE);
+					}
+					readNFiles(0, read_dir);
+				}
+				else {
+					fprintf(stderr,"argomento assente per %c\n", (char)optopt);
+					exit(EXIT_FAILURE);
+				}
+				break;
+		}		
 	}
 	if(connection_established == 1) {
    		if(closeConnection(sockname) == -1) //API
    			perror("closeConnection"); 	
     }
+    if(sockname) free(sockname);
+    if(read_dir) free(read_dir);
     return 0;
 }
 

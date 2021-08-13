@@ -144,4 +144,13 @@ static inline char * tStamp(char * timeString) {
     return timeString;
 }
 
+/*
+* @brief ritorna true se l'argomento e' esattamente '.'
+*/
+static inline int isDot(const char dir[]) {
+    int l = strlen(dir);
+    if ( l>0 && (dir[l-1] == '.') ) return 1;
+    return 0;
+}
+
 #endif /* UTIL_H */
