@@ -11,10 +11,7 @@
 #include <sys/types.h> 
 #include <sys/uio.h>
 #include <sys/un.h>
-/*non so se serviranno, controllare dopo
-#include <ctype.h>
-#include <errno.h>
-#include <linux/limits.h> */
+
 #include <util.h>
 #include <mydata.h>
 #include <worker.h>
@@ -35,6 +32,12 @@ long MAX_FIL = 0;
 long CUR_FIL = 0;
 
 //char timestr[11]; usata per il timestamp nel file di log
+
+//usata per passare gli argomenti al signal handler
+typedef struct {
+    sigset_t     *set;           
+    int           signal_pipe;  
+} sigHandler_t;
 
 static void *sigHandler(void *arg) {
 	sigset_t *set = ((sigHandler_t*)arg)->set;

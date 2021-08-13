@@ -1,12 +1,10 @@
-#define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE 2001112L
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <assert.h>
 #include <string.h>
 #include <libgen.h>
-//#include <errno.h>
-//#include <ctype.h>
 
 #include <util.h>
 #include <mydata.h>
@@ -40,6 +38,12 @@ void handler_openfile(long fd, icl_hash_t * table, void * key, int flag, pid_t i
 		pthread_mutex_init(&(data->lock), NULL);
 		pthread_cond_init(&(data->cond), NULL);
 		fprintf(stdout, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);
+
+
+		//devo ricordarmi da qualche parte che il file identificato da key e' stato lockato da id
+		list_insert(id, (char*)key);
+
+
 		//inserisco nella tabella il nuovo file
 		if(icl_hash_insert(table, key, data) == NULL) {
 			fprintf(stderr, "errore inserimento in memoria di %s\n", (char*)key);
@@ -146,12 +150,164 @@ void handler_read_n_files(long fd, icl_hash_t * table, int N) {
 	if(file_array) free(file_array);
 }
 
+void handler_unlockfile(long fd, icl_hash_t * table, void * key, pid_t id) {
+
+	int unused, retval = 0;
+	file_t *data;
+	
+	data = icl_hash_find(table, key);
+	if(data != NULL) {
+		//L’operazione ha successo solo se l’owner della lock è il processo che ha richiesto l’operazione
+		//altrimenti l’operazione termina con errore.
+		if(data->locked_by == id) {
+			LOCK(&data->lock);
+			data->lock_flag = 0;
+			data->locked_by = -1;
+			SIGNAL(&data->cond);	//se c'e' un altro worker in attesa del file lo avverto
+			UNLOCK(&data->lock);
+
+			fprintf(stdout, "%s[LOG] Unlocked file %s\n", tStamp(timestr), (char*)key);
+			//devo togliere il file dalla lista di cleanup alla chiusura
+			list_delete(id);
+		}
+		else {
+			retval = -1;
+			fprintf(stderr, "[SERVER] errore unlock: file lockato da un altro client\n");
+		}
+	} 
+	else {
+		retval = -1;
+		fprintf(stderr, "[SERVER] errore unlock: file non trovato\n");
+	}
+	SYSCALL_EXIT("write", unused, write(fd, &retval, sizeof(int)), "inviando dati al client", "");
+}
+
+void handler_lockfile(long fd, icl_hash_t * table, void * key, pid_t id) {
+	int unused, retval = 0;
+	int check = 1; //gestione caso limite
+	file_t *data;
+
+	data = icl_hash_find(table, key);
+	if(data != NULL) {
+		//caso 1: il file era stato aperto/creato con il flag O_LOCK e larichiesta proviene dallo stesso processo
+		if(data->lock_flag == 1 && data->locked_by == id ) {
+			printf("[SERVER] il file e' gia' in stato di lock\n");
+			SYSCALL_EXIT("write", unused, write(fd, &retval, sizeof(int)), "inviando dati al client", "");
+			return;
+		}
+		//caso 2: il file non ha flag lock settato
+		if(data->lock_flag != 1 ){
+			LOCK(&data->lock);
+			if(data->lock_flag != 1) {	//caso limite in cui tra l'if e il lock veniamo deschedulati 
+				data->lock_flag = 1;	//e il file viene lockato da un altro worker
+				data->locked_by = id;
+			} else check = 0;
+			UNLOCK(&data->lock);
+			if(check){
+				fprintf(stdout, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);
+
+
+				//devo ricordarmi da qualche parte che il file identificato da key e' stato lockato da id
+				list_insert(id, (char*)key);
+
+
+				SYSCALL_EXIT("write", unused, write(fd, &retval, sizeof(int)), "inviando dati al client", "");
+				return;	
+			}			
+		}
+		//caso 3: il file e' lockato, da specifica l'operazione non termina finche' il flag non viene resettato
+		//attendo un segnale che verra' inviato dal processo che effettua l'unlock
+		printf("[SERVER] file occupato, attendo la liberazione...\n");
+		LOCK(&data->lock);
+		while(data->lock_flag == 1)
+			WAIT(&data->cond, &data->lock);
+		data->lock_flag = 1;		
+		data->locked_by = id;
+		UNLOCK(&data->lock);
+		fprintf(stdout, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);	
+		//aggiungo il file alla lista di cleanup all'uscita
+		list_insert(id, (char*)key);	
+	}
+	else { 
+		retval = -1; 
+		fprintf(stderr, "[SERVER] errore lock: file non trovato\n");
+	}
+	SYSCALL_EXIT("write", unused, write(fd, &retval, sizeof(int)), "inviando dati al client", "");
+}
+
+void handler_removefile(long fd, icl_hash_t * table, void * key, pid_t id) {
+	//L’operazione fallisce se il file non è in stato locked, o è in
+	//stato locked da parte di un processo client diverso da chi effettua la removeFile
+	int unused, retval = 0;
+	file_t *data;
+
+	data = icl_hash_find(table, key);
+	if(data != NULL) {
+		if(data->lock_flag == 1 && data->locked_by == id) {
+			//prima di eliminare il file devo salvare size e nome
+			size_t fsize = data->file_size;
+			char * tmp = malloc(strlen((char*)key));
+			if(tmp == NULL){
+				perror("malloc");
+				exit(EXIT_FAILURE);
+			}
+			strcpy(tmp, (char*)key);
+			//lo tolgo dalla lista del cleanup
+			list_delete(id);
+			//posso rimuovere il file
+			LOCK(&data->lock);
+			retval = icl_hash_delete(table, key, NULL, free);
+			UNLOCK(&data->lock);
+			if(retval==0){
+				//aggiorno le informazioni sulla memoria occupata
+				CUR_CAP = CUR_CAP - fsize;
+				CUR_FIL = CUR_FIL - 1;
+				fprintf(stdout, "%s[LOG] Removed file %s (%d Bytes)\n", tStamp(timestr), tmp, (int)fsize);
+			} 
+			free(tmp);
+		}
+		else if(data->lock_flag != 1) {
+			retval = -1;
+			fprintf(stderr, "[SERVER] errore remove: file non lockato\n");
+		}
+		else {
+			retval = -1;
+			fprintf(stderr, "[SERVER] errore remove: file lockato da un altro client\n");
+		}
+	}else {
+		retval = -1;
+		fprintf(stderr, "[SERVER] errore remove: file non trovato\n");
+	}
+	SYSCALL_EXIT("write", unused, write(fd, &retval, sizeof(int)), "inviando dati al client", "");
+}
+
+void unlock_atexit(icl_hash_t * table, char * key, int id) {
+
+	file_t *data;
+	data = icl_hash_find(table, key);
+	//dovrebbe essere presente ma controllo per sicurezza
+	if(data != NULL) {
+		if(data->locked_by == id) {
+			LOCK(&data->lock);
+			data->lock_flag = 0;
+			data->locked_by = -1;
+			SIGNAL(&data->cond);	//se c'e' un altro worker in attesa del file lo avverto
+			UNLOCK(&data->lock);
+			fprintf(stdout, "%s[LOG] Unlocked file (at exit) %s\n", tStamp(timestr), (char*)key);
+			list_delete(id);
+		}
+		else fprintf(stderr, "[SERVER] errore unlock_atexit\n");
+	} 
+	else fprintf(stderr, "[SERVER] errore unlock_atexit\n");
+}
+
 void workerF(void *arg) {
 	assert(arg);
 
     long connfd = ((workerArg_t*)arg)->clientfd;
 	int req_pipe = ((workerArg_t*)arg)->pipe; 
 	icl_hash_t * htab = ((workerArg_t*)arg)->hash_table; 
+	char * keyptr;
 
 	request_t * req;
 	int notused;
@@ -166,9 +322,12 @@ void workerF(void *arg) {
     		break;
     		
 		case CLOSE_CONNECTION:
+			//se ho file lockati dal client che sto chiudendo, li libero
+			while((keyptr = list_find_key((int)req->cid)) != NULL)
+    			unlock_atexit(htab, keyptr, req->cid);
     		close(connfd);
     		fprintf(stdout, "%s[LOG] Closed connection (client %d)\n", tStamp(timestr), (int)req->cid);
-    		break;
+			break;
 
 		case OPEN_FILE:
     		handler_openfile(connfd, htab, req->filepath, req->arg, req->cid);
@@ -187,6 +346,21 @@ void workerF(void *arg) {
 
     	case READ_N_FILES:
     		handler_read_n_files(connfd, htab, req->arg);
+    		SYSCALL_EXIT("write", notused, write(req_pipe, &connfd, sizeof(long)), "scrivendo nella request pipe", "");
+    		break;
+
+    	case UNLOCK_FILE:
+    		handler_unlockfile(connfd, htab, req->filepath, req->cid);
+    		SYSCALL_EXIT("write", notused, write(req_pipe, &connfd, sizeof(long)), "scrivendo nella request pipe", "");
+    		break;
+
+    	case LOCK_FILE:
+    		handler_lockfile(connfd, htab, req->filepath, req->cid);
+    		SYSCALL_EXIT("write", notused, write(req_pipe, &connfd, sizeof(long)), "scrivendo nella request pipe", "");
+    		break;
+
+    	case REMOVE_FILE:
+    		handler_removefile(connfd, htab, req->filepath, req->cid);
     		SYSCALL_EXIT("write", notused, write(req_pipe, &connfd, sizeof(long)), "scrivendo nella request pipe", "");
     		break;
     }

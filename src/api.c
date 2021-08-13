@@ -225,7 +225,6 @@ int readFile(const char* pathname, void** buf, size_t* size) {
 	return retval;
 }
 
-//WORK IN PROGRESS
 int readNFiles(int N, const char* dirname) {
 	int ret;
 	request_t * rts;
@@ -287,6 +286,36 @@ int readNFiles(int N, const char* dirname) {
 	if(fname) free(fname);
 	free(rts);
 	return count;
+}
+
+int unlockFile(const char* pathname) {
+	int ret, retval;
+	request_t * rts;
+	rts = initRequest(UNLOCK_FILE, pathname, 0);
+	if(rts == NULL) return -1;
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	return retval;
+}
+
+int lockFile(const char* pathname) {
+	int ret, retval;
+	request_t * rts;
+	rts = initRequest(LOCK_FILE, pathname, 0);
+	if(rts == NULL) return -1;
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	return retval;
+}
+
+int removeFile(const char* pathname) {
+	int ret, retval;
+	request_t * rts;
+	rts = initRequest(REMOVE_FILE, pathname, 0);
+	if(rts == NULL) return -1;
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	return retval;
 }
 
 //API aggiuntiva, salva localmente nella cartella dirname un file con il contenuto puntato dal buffer

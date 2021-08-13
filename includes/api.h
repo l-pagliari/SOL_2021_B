@@ -15,6 +15,12 @@ int readFile(const char* pathname, void** buf, size_t* size);
 
 int readNFiles(int N, const char* dirname);
 
+int unlockFile(const char* pathname);
+
+int lockFile(const char* pathname);
+
+int removeFile(const char* pathname);
+
 int saveFile(const char* dirname, const char* pathname, void* buf, size_t size);
 
 #endif /* API_H */

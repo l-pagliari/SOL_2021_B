@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <errno.h>
+#include <signal.h>
 #include <linux/limits.h>
 
 #if !defined(BUFSIZE)
@@ -32,7 +33,6 @@
 		print_error(str, __VA_ARGS__);			\
 		exit(errno_copy);						\
     }
-
 #define SYSCALL_EXIT(name, r, sc, str, ...)		\
     if ((r=sc) == -1) {							\
 		perror(#name);							\
@@ -40,7 +40,6 @@
 		print_error(str, __VA_ARGS__);			\
 		exit(errno_copy);						\
     }
-
 #define SYSCALL_RETURN(name, r, sc, str, ...)   \
     if ((r=sc) == -1) {                         \
         perror(#name);                          \
@@ -50,18 +49,36 @@
         return r;                               \
     }
 
-#define LOCK_RETURN(l, r)  							\
-    if (pthread_mutex_lock(l)!=0) {					\
-   		fprintf(stderr, "ERRORE FATALE lock\n");	\
-    	return r;									\
- 	}
-
- #define UNLOCK_RETURN(l,r)    						\
- 	if (pthread_mutex_unlock(l)!=0) {				\
-   		fprintf(stderr, "ERRORE FATALE unlock\n");	\
-    	return r;									\
-  	}
-
+#define LOCK(l)                                     \
+    if (pthread_mutex_lock(l)!=0) {                 \
+        fprintf(stderr, "ERRORE FATALE lock\n");    \
+        pthread_exit((void*)EXIT_FAILURE);          \
+    }   
+#define LOCK_RETURN(l, r)                           \
+    if (pthread_mutex_lock(l)!=0) {                 \
+        fprintf(stderr, "ERRORE FATALE lock\n");    \
+        return r;                                   \
+    }
+#define UNLOCK(l)                                   \
+    if (pthread_mutex_unlock(l)!=0) {               \
+        fprintf(stderr, "ERRORE FATALE unlock\n");  \
+        pthread_exit((void*)EXIT_FAILURE);          \
+    }
+#define UNLOCK_RETURN(l,r)                          \
+    if (pthread_mutex_unlock(l)!=0) {               \
+        fprintf(stderr, "ERRORE FATALE unlock\n");  \
+        return r;                                   \
+    }
+#define WAIT(c,l)                                   \
+    if (pthread_cond_wait(c,l)!=0) {                \
+        fprintf(stderr, "ERRORE FATALE wait\n");    \
+        pthread_exit((void*)EXIT_FAILURE);          \
+    }
+#define SIGNAL(c)                                   \
+    if (pthread_cond_signal(c)!=0) {                \
+        fprintf(stderr, "ERRORE FATALE signal\n");  \
+        pthread_exit((void*)EXIT_FAILURE);          \
+    }
 /**
  * \brief Procedura di utilita' per la stampa degli errori
  */

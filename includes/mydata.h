@@ -1,7 +1,6 @@
 #if !defined(MY_DATA_H)
 #define MY_DATA_H
 
-#include <signal.h>
 #include <icl_hash.h>
 
 #define O_CREATE 1
@@ -20,12 +19,6 @@ typedef struct {
 	long	mem_files;
 	long 	mem_bytes;
 } config_t;
-
-//usata per passare gli argomenti al signal handler
-typedef struct {
-    sigset_t     *set;           
-    int           signal_pipe;  
-} sigHandler_t;
 
 //usata per passare i dati utili dal manager thread al worker thread
 typedef struct {
@@ -61,10 +54,21 @@ enum {
     OPEN_FILE           = 2,
     WRITE_FILE          = 3,
     READ_FILE           = 4,
-    READ_N_FILES        = 5
-    //REMOVE_FILE         = 5,
-    //LOCK_FILE           = 6,
-    //UNLOCK_FILE         = 7
+    READ_N_FILES        = 5,
+    REMOVE_FILE         = 6,
+    LOCK_FILE           = 7,
+    UNLOCK_FILE         = 8
 };
+
+struct node {
+   int id;
+   char ht_key[PATH_MAX];
+   struct node *next;
+};
+void list_insert(int id, char * data);
+int list_isEmpty(void);
+char* list_find_key(int id);
+int list_delete(int id);
+
 
 #endif /* MY_DATA_H */
