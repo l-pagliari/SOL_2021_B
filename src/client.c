@@ -34,15 +34,16 @@ int main(int argc, char *argv[]) {
     int saveread = 0;
     char opt;
     char *sockname = NULL;
-    char *token, *save;
+    char *token, *save, *token2;
     char *read_dir = NULL;
     size_t fsize;
     void *memptr = NULL;
 	//usati da strtol in R
     char *endptr;
     long val;
-    
-    while((opt = getopt(argc, argv, ":hf:W:r:R:d:u:l:c:")) != -1) {
+    int quiet = 1;		
+
+    while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:u:l:c:t:p")) != -1) {
     	switch(opt) {
 			
 			case 'h': 
@@ -69,6 +70,7 @@ int main(int argc, char *argv[]) {
 					perror("openConnection");
 					exit(EXIT_FAILURE);
 				}
+				if(!quiet) printf("[CLIENT] Connesso al socket %s\n", sockname);
 				connection_established = 1;
 				break;
 			
@@ -80,9 +82,40 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					r = openFile(token, O_CREATE | O_LOCK);
-					if(r == 0) writeFile(token, NULL);
+					if(r == 0) {
+						writeFile(token, NULL);
+						if(!quiet) printf("[CLIENT] Scritto il file %s sul server\n", token);
+					}
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
+				break;
+
+			case 'w':
+				if(connection_established == 0) {
+					fprintf(stderr, "connesione non stabilita\n");
+					exit(EXIT_FAILURE);
+				}
+				//input della forma -w dirname,[n=0]
+				token = strtok_r(optarg, ",", &save);
+				token2 = strtok_r(NULL, ",", &save);
+				if(token2 == NULL) writeDirectory(token, 0);
+				else if(strlen(token2) > 2) {
+					errno = 0;
+					val = strtol(optarg+2, &endptr, 10);
+					if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+               			perror("strtol");
+               			exit(EXIT_FAILURE);
+           			}
+					if (endptr == optarg+2 || val < 0) {
+               			fprintf(stderr, "input errato, usare -h per aiuto\n");
+               			exit(EXIT_FAILURE);
+           			}
+					writeDirectory(token, (int)val);
+				}
+				else {
+					fprintf(stderr, "input errato, usare -h per aiuto\n");
+               		exit(EXIT_FAILURE);
+               	}
 				break;
 
 			case 'r':
@@ -92,8 +125,14 @@ int main(int argc, char *argv[]) {
 				}
 				token = strtok_r(optarg, ",", &save);
 				do{
-					readFile(token, &memptr, &fsize);
-					if(saveread) saveFile(read_dir, token, memptr, fsize);
+					r = readFile(token, &memptr, &fsize);
+					if(r == 0) {
+						if(!quiet) printf("[CLIENT] Letto il file %s (%ld Bytes)\n", token, fsize);
+						if(saveread) r = saveFile(read_dir, token, memptr, fsize);
+						if(r == 0) {
+							if(!quiet) printf("[CLIENT] Salvato il file %s nella directory %s\n", token, read_dir);
+						}
+					}
 					if(memptr) free(memptr);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);	
@@ -117,7 +156,11 @@ int main(int argc, char *argv[]) {
            		}
 				//read_dir != NULL indica che vogliamo memorizzare i file letti
 				//il cast per l'uso realistico non dovrebbe causare problemi, in caso si puo' usare atoi con un altro errchecking
-				readNFiles((int)val, read_dir);
+				r = readNFiles((int)val, read_dir);
+				if(!quiet && r > 0) {
+					if(read_dir == NULL) printf("[CLIENT] Letti %d file diversi dal server\n", r);
+					else printf("[CLIENT] Letti %d file diversi dal server e salvati nella directory %s\n", r, read_dir);
+				}
 				break;
 
 			//directory dove salvare localmente i file letti dal server
@@ -144,6 +187,7 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					r = unlockFile(token);
+					if(!quiet && r==0) printf("[CLIENT] Lockato il file %s\n", token);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
 				break;
@@ -156,6 +200,7 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					r = lockFile(token);
+					if(!quiet && r==0) printf("[CLIENT] Unlockato il file %s\n", token);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
 				break;
@@ -168,9 +213,35 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					r = removeFile(token);
+					if(!quiet && r==0) printf("[CLIENT] Eliminato il file %s\n", token);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
 				break;
+
+			case 't':
+				//l'argomento e' il numero di millisecondi
+				errno = 0;
+				val = strtol(optarg, &endptr, 10);
+				if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+               		perror("strtol");
+               		exit(EXIT_FAILURE);
+           		}
+				if (endptr == optarg || val < 0) {
+               		fprintf(stderr, "input errato, usare -h per aiuto\n");
+               		exit(EXIT_FAILURE);
+           		}
+           		setDelay(val);
+           		if(!quiet) printf("[CLIENT] Abilitato il ritardo tra le richieste di %ldmsec\n", val);
+    			break;
+
+    		case 'p':
+    			if(!quiet) {
+    				fprintf(stderr, "input errato, usare -h per aiuto\n");
+               		exit(EXIT_FAILURE);
+    			}
+    			quiet = 0;
+    			printf("[CLIENT] Stampe su stdout abilitate\n");
+    			break;
 
 			//getopt error handling manuale per gestire gli argomenti opzionali
 			case '?': 
@@ -183,7 +254,11 @@ int main(int argc, char *argv[]) {
 						fprintf(stderr, "connesione non stabilita\n");
 						exit(EXIT_FAILURE);
 					}
-					readNFiles(0, read_dir);
+					r = readNFiles(0, read_dir);
+					if(!quiet && r > 0) {
+						if(read_dir == NULL) printf("[CLIENT] Letti %d file diversi dal server\n", r);
+						else printf("[CLIENT] Letti %d file diversi dal server e salvati nella directory %s\n", r, read_dir);
+					}
 				}
 				else {
 					fprintf(stderr,"argomento assente per %c\n", (char)optopt);
@@ -194,7 +269,9 @@ int main(int argc, char *argv[]) {
 	}
 	if(connection_established == 1) {
    		if(closeConnection(sockname) == -1) //API
-   			perror("closeConnection"); 	
+   			perror("closeConnection"); 
+   		else if(!quiet) printf("[CLIENT] Chiusa la connesione con il socket %s\n", sockname);
+						
     }
     if(sockname) free(sockname);
     if(read_dir) free(read_dir);

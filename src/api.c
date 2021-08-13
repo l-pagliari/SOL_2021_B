@@ -23,8 +23,10 @@
 long connfd;
 char *socket_name;
 
+long ms_delay = 0;
+int delay = 0;
+
 //inizializza la richiesta da mandare al server
-//NON SO SE VA AGGIUNTA DIRNAME, AGGIORNARE IN SEGUITO
 request_t * initRequest(int t, const char * fname, int n){
 	request_t * req;
 	if((req = malloc(sizeof(request_t))) == NULL) {
@@ -81,6 +83,8 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     socket_name = malloc(strlen(sockname)*sizeof(char));
     strncpy(socket_name, sockname, strlen(sockname));
     free(rts);
+
+    if(delay) msleep(ms_delay);;
 	return 0;
 }
 
@@ -108,10 +112,11 @@ int openFile(const char *pathname, int flags) {
 	request_t * rts;
 	rts = initRequest(OPEN_FILE, pathname, flags);
 	if(rts == NULL) return -1;
-
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati al server", "");
 	free(rts);
+	if(delay) msleep(ms_delay);
 	return retval;
 }
 
@@ -156,44 +161,66 @@ int writeFile(const char *pathname, const char *dirname) {
 
 	free(buffer);
 	free(rts);
+	if(delay) msleep(ms_delay);
 	return retval;
 }
 
-/*
-int readFile(const char* pathname, void** buf, size_t* size) {
-
-	int ret, retval;
-	request_t * rts;
-	rts = initRequest(READ_FILE, pathname, 0);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
-
-	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-
-	if(retval == 0) {
-		
-		void* buf2;
-		SYSCALL_RETURN("read", ret, readn(connfd, size, sizeof(size_t)), "ricevendo dati dal server", ""); 
-		if((buf2 = malloc(*size)) == NULL ) {
-			perror("malloc");
-			return -1;
-		} 
-		SYSCALL_RETURN("read", ret, readn(connfd, buf2, *size), "ricevendo dati dal server", "");
-
-		file_t * readfile;
-		readfile = buf2;
-		printf("[CLIENT] Letto file: %s (dim: %d Bytes)\n", (char*)readfile->contenuto, (int)readfile->file_size);
-
-
-
-		printf("FILE RICHIESTO (%s) (dim: %dbytes):\n"
-				"----------------------------------------\n%s"
-				"----------------------------------------\n", pathname, (int) *size, (char*)buf2); 
-		(*buf) = buf2;
+int writeDirectory(const char *dirname, int max_files) {
+	//controllo input per essere certi che e' stata passata una directory
+	struct stat statbuf;
+	int r;
+	DIR * dir;
+	SYSCALL_EXIT(stat, r, stat(dirname, &statbuf), "facendo la stat di %s: errno =%d", dirname, errno);
+	if(!S_ISDIR(statbuf.st_mode)) {
+		fprintf(stderr, "%s non e' una directory\n", dirname);
+		return -1;
 	}
-	free(rts);
-	return retval;
-} */
+	if(chdir(dirname) == -1) {
+		fprintf(stderr,"impossibile entrare nella directory %s\n", dirname);
+		return -1;
+	}
+	if((dir = opendir(".")) == NULL) {
+		fprintf(stderr, "errore aprendo la directory %s\n", dirname);
+		return -1;
+	} else {
+		struct dirent *file;
+		while((errno = 0, file = readdir(dir)) != NULL) {
+			struct stat statbuf;
+			if(stat(file->d_name, &statbuf) == -1) {
+				perror("stat");
+				return -1;
+			}
+			//devo gestire il caso di sotto-directory, ricorsivamente
+			if(S_ISDIR(statbuf.st_mode)) {
+				if(!isDot(file->d_name)) {
+					//faccio find ricorsivamente nella sottocartella
+					if(writeDirectory(file->d_name, max_files) != -2) { 
+						if(chdir("..") == -1) {
+							fprintf(stderr, "impossibile risalire alla directory parent\n");
+							return -1;
+						}
+					}
+				}
+			}
+			else { //ho un effettivo file da mandare al server
+				int r;
+				r = openFile(file->d_name, O_CREATE|O_LOCK);
+				if(r == 0) writeFile(file->d_name, NULL);
+				if(max_files == 1) {
+					//printf("[CLIENT] Fine operazione\n");
+				 	return 0;
+				}
+				if(max_files > 1) max_files--;
+			}
+		}
+		//sono alla fine del while e devo controllare errno perche' non posso sapere perche' e' terminato
+		if(errno != 0) perror("readdir");
+		closedir(dir);
+	}
+	//printf("[CLIENT] Fine operazione\n");
+	if(delay) msleep(ms_delay);
+	return 0;
+}
 
 int readFile(const char* pathname, void** buf, size_t* size) {
 
@@ -216,12 +243,13 @@ int readFile(const char* pathname, void** buf, size_t* size) {
 		}
 		SYSCALL_RETURN("read", ret, readn(connfd, buf2, *size), "ricevendo dati dal server", "");
 		//STAMPA A FINI DI TEST
-		printf("FILE RICHIESTO (%s) (dim: %dbytes):\n"
+		/*printf("FILE RICHIESTO (%s) (dim: %dbytes):\n"
 				"----------------------------------------\n%s"
-				"----------------------------------------\n", pathname, (int) *size, (char*)buf2);
+				"----------------------------------------\n", pathname, (int) *size, (char*)buf2);*/
 		(*buf) = buf2;
 	}
 	free(rts);
+	if(delay) msleep(ms_delay);
 	return retval;
 }
 
@@ -285,6 +313,7 @@ int readNFiles(int N, const char* dirname) {
 	if(buf) free(buf);
 	if(fname) free(fname);
 	free(rts);
+	if(delay) msleep(ms_delay);
 	return count;
 }
 
@@ -295,6 +324,7 @@ int unlockFile(const char* pathname) {
 	if(rts == NULL) return -1;
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	if(delay) msleep(ms_delay);
 	return retval;
 }
 
@@ -305,6 +335,7 @@ int lockFile(const char* pathname) {
 	if(rts == NULL) return -1;
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	if(delay) msleep(ms_delay);
 	return retval;
 }
 
@@ -315,6 +346,7 @@ int removeFile(const char* pathname) {
 	if(rts == NULL) return -1;
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	if(delay) msleep(ms_delay);
 	return retval;
 }
 
@@ -370,8 +402,15 @@ int saveFile(const char* dirname, const char* pathname, void* buf, size_t size) 
 		perror("fwrite");
 		return -1;
 	}
-	printf("[CLIENT] Saved file %s\n", filepath);
+	//printf("[CLIENT] Saved file %s\n", filepath);
 	free(filepath);
 	fclose(fp);
+	if(delay) msleep(ms_delay);
 	return 0;
+}
+
+int setDelay(long msec) {
+	ms_delay = msec;
+    delay = 1;
+    return 0;
 }
