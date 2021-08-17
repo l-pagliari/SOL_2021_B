@@ -26,6 +26,8 @@
 volatile int termina = 0;
 volatile int hangup = 0;
 
+queue_t * replace_queue;
+
 long MAX_CAP = 0;
 long CUR_CAP = 0;
 long MAX_FIL = 0;
@@ -151,6 +153,12 @@ int main(int argc, char* argv[]) {
     	destroyThreadPool(pool, 0);
     	exit(EXIT_FAILURE);
 	}
+
+	replace_queue = init_queue();
+
+
+
+
 	/* FINE BLOCCO SOCKET+STRUTTURE DATI */
 
 	/* BLOCCO SELECT */

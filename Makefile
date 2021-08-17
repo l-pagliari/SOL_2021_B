@@ -20,7 +20,7 @@ TARGETS		= server	\
 
 all: $(TARGETS)
 
-server: server.o sconfig.o worker.o list.o $(LIBDIR)libPool.a $(LIBDIR)libHash.a
+server: server.o sconfig.o worker.o list.o queue.o $(LIBDIR)libPool.a $(LIBDIR)libHash.a
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 client: client.o api.o
@@ -42,6 +42,8 @@ sconfig.o: $(SRCDIR)sconfig.c
 worker.o: $(SRCDIR)worker.c
 
 list.o: $(SRCDIR)list.c
+
+queue.o: $(SRCDIR)queue.c
 
 threadpool.o: $(SRCDIR)threadpool.c 
 

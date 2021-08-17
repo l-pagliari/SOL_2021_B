@@ -127,11 +127,6 @@ int writeFile(const char *pathname, const char *dirname) {
 	rts = initRequest(WRITE_FILE, pathname, 0);
 	if(rts == NULL) return -1;
 	
-	/*	PARTE READ
-	*   non sapendo a priori le dimensioni dei file che andranno nello storage ho deciso
-	*	di utilizzare stat per sapere esattamente la dimensione del file da leggere per inizializzare 
-	*	il buffer e comunicare la size precisa al server
-	*/
 	FILE *fp;
 	char *buffer;
 	size_t fsize, num;
@@ -157,19 +152,82 @@ int writeFile(const char *pathname, const char *dirname) {
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("write", ret, writen(connfd, &fsize, sizeof(size_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("write", ret, writen(connfd, buffer, fsize), "inviando dati al server", "");
+
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+
+	//FINO A QUI FUNZIONA BENE
+
+	//A questo punto possono succedere tre cose: 
+	//1.retval == 0: ho finito
+	//2.retval == 1: il server deve espellere uno o piu' file per fare spazio al nuovo
+	//3.retval ==-1: si e' verificato un qualche tipo di errore nella scrittura
+
+	while(retval == 1) retval = capacityMissHandler(dirname);
 
 	free(buffer);
 	free(rts);
 	if(delay) msleep(ms_delay);
 	return retval;
 }
+		
+int capacityMissHandler(const char *dirname) {
+	
+	int ret, retval = 1;
+	size_t expfsize, namelen;
+	char *fname = NULL;
+	char *buf = NULL;
+	char synch = 's';
 
-int writeDirectory(const char *dirname, int max_files) {
+	//per qualche ragione le realloc non funzionano se non faccio prima una malloc
+	//fixare in seguito se rimane tempo
+	fname = malloc(64);
+	if(fname == NULL) {
+		perror("malloc");
+		return -1;
+	}
+	buf = malloc(64);
+	if(buf == NULL) {
+		perror("malloc");
+		return -1;
+	}
+
+	//while(retval == 1) {
+		//leggo il nome del file
+		SYSCALL_RETURN("read", ret, readn(connfd, &namelen, sizeof(size_t)), "ricevendo dati dal server", "");
+		if(realloc(fname, namelen+1) == NULL){
+			perror("realloc");
+			return -1;
+		}
+		SYSCALL_RETURN("read", ret, readn(connfd, fname, namelen), "ricevendo dati dal server", "");
+		fname[namelen] = '\0'; //per la stampa del nome, in caso del salvataggio 
+
+		//leggo il contenuto del file
+		SYSCALL_RETURN("read", ret, readn(connfd, &expfsize, sizeof(size_t)), "ricevendo dati dal server", "");
+		if(realloc(buf, expfsize) == NULL) {
+			perror("realloc");
+			return -1;
+		}
+		SYSCALL_RETURN("read", ret, readn(connfd, buf, expfsize), "ricevendo dati dal server", ""); 
+
+		//se specificato devo salvare il file
+		if(dirname != NULL) saveFile(dirname, fname, buf, expfsize);
+
+		//comunico la fine della lettura
+		SYSCALL_RETURN("write", ret, write(connfd, &synch, 1), "inviando dati al server", "");
+		//leggo se c'e' un altro file in arrivo
+		SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+	//}
+	free(buf);
+	free(fname);
+	return retval;
+}
+
+int writeDirectory(const char *dirname, int max_files, const char *writedir) {
 	//controllo input per essere certi che e' stata passata una directory
 	struct stat statbuf;
 	int r;
 	DIR * dir;
+
 	SYSCALL_EXIT(stat, r, stat(dirname, &statbuf), "facendo la stat di %s: errno =%d", dirname, errno);
 	if(!S_ISDIR(statbuf.st_mode)) {
 		fprintf(stderr, "%s non e' una directory\n", dirname);
@@ -194,7 +252,7 @@ int writeDirectory(const char *dirname, int max_files) {
 			if(S_ISDIR(statbuf.st_mode)) {
 				if(!isDot(file->d_name)) {
 					//faccio find ricorsivamente nella sottocartella
-					if(writeDirectory(file->d_name, max_files) != -2) { 
+					if(writeDirectory(file->d_name, max_files, writedir) != -2) { 
 						if(chdir("..") == -1) {
 							fprintf(stderr, "impossibile risalire alla directory parent\n");
 							return -1;
@@ -205,7 +263,7 @@ int writeDirectory(const char *dirname, int max_files) {
 			else { //ho un effettivo file da mandare al server
 				int r;
 				r = openFile(file->d_name, O_CREATE|O_LOCK);
-				if(r == 0) writeFile(file->d_name, NULL);
+				if(r == 0) writeFile(file->d_name, writedir);
 				if(max_files == 1) {
 					//printf("[CLIENT] Fine operazione\n");
 				 	return 0;

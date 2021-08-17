@@ -1,4 +1,5 @@
-#define _POSIX_C_SOURCE 2001112L
+//#define _POSIX_C_SOURCE 2001112L
+#define _GNU_SOURCE
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +23,7 @@
 #endif
 
 void usage(void);
+int makeDir(const char* dirname, char *path);
 
 int main(int argc, char *argv[]) {
 	
@@ -32,18 +34,21 @@ int main(int argc, char *argv[]) {
 	int r;
     int connection_established = 0;
     int saveread = 0;
+    int savewrite = 0;
     char opt;
     char *sockname = NULL;
     char *token, *save, *token2;
     char *read_dir = NULL;
+    char *write_dir = NULL;
     size_t fsize;
     void *memptr = NULL;
 	//usati da strtol in R
     char *endptr;
     long val;
-    int quiet = 1;		
+    int quiet = 1;	
+    char dirpath[PATH_MAX];	
 
-    while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:u:l:c:t:p")) != -1) {
+    while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:p")) != -1) {
     	switch(opt) {
 			
 			case 'h': 
@@ -83,8 +88,9 @@ int main(int argc, char *argv[]) {
 				do{
 					r = openFile(token, O_CREATE | O_LOCK);
 					if(r == 0) {
-						writeFile(token, NULL);
-						if(!quiet) printf("[CLIENT] Scritto il file %s sul server\n", token);
+						r = writeFile(token, write_dir);
+						if(r == -1) printf("[CLIENT] Errore nella scrittura del file\n");
+						else if(!quiet) printf("[CLIENT] Scritto il file %s sul server\n", token);
 					}
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
@@ -98,7 +104,7 @@ int main(int argc, char *argv[]) {
 				//input della forma -w dirname,[n=0]
 				token = strtok_r(optarg, ",", &save);
 				token2 = strtok_r(NULL, ",", &save);
-				if(token2 == NULL) writeDirectory(token, 0);
+				if(token2 == NULL) writeDirectory(token, 0, write_dir);
 				else if(strlen(token2) > 2) {
 					errno = 0;
 					val = strtol(optarg+2, &endptr, 10);
@@ -110,7 +116,7 @@ int main(int argc, char *argv[]) {
                			fprintf(stderr, "input errato, usare -h per aiuto\n");
                			exit(EXIT_FAILURE);
            			}
-					writeDirectory(token, (int)val);
+					writeDirectory(token, (int)val, write_dir);
 				}
 				else {
 					fprintf(stderr, "input errato, usare -h per aiuto\n");
@@ -172,6 +178,26 @@ int main(int argc, char *argv[]) {
 					}
 					strncpy(read_dir, optarg, strlen(optarg));
 					saveread = 1;
+				}
+				else {
+					fprintf(stderr, "input errato, usare -h per aiuto\n");
+					exit(EXIT_FAILURE);
+				}
+				break;
+
+			case 'D':
+				if(savewrite == 0){
+					if((write_dir = malloc(PATH_MAX)) == NULL) {
+						perror("malloc");
+						exit(EXIT_FAILURE);
+					}
+					r = makeDir(optarg, dirpath);
+					if(r == -1) {
+						fprintf(stderr, "input errato, usare -h per aiuto\n");
+						exit(EXIT_FAILURE);
+					}
+					write_dir = dirpath;
+					savewrite = 1;
 				}
 				else {
 					fprintf(stderr, "input errato, usare -h per aiuto\n");
@@ -298,4 +324,28 @@ void usage(void) {
 		"-c file1[,file2]: lista di file da rimuovere dal server se presenti;\n\n"
 		"-p: abilita le stampe sullo standard output per ogni operazione.\n\n"
 		"Gli argomenti possono essere ripetuti piu' volte (ad eccezione di '-f', '-h', '-p').\n");
+}
+
+int makeDir(const char* dirname, char *path){
+	//provo a creare la directory, se gia' esiste il file controllo che sia una directory
+	struct stat statbuf;
+	int unused, r;
+	r = mkdir(dirname, 0777);
+	if(r == -1 && errno != EEXIST) {
+		perror("mkdir");
+		return -1;
+	}
+	if(r == -1) {
+		SYSCALL_RETURN(stat, unused, stat(dirname, &statbuf), "facendo la stat di %s\n", dirname);
+		if(!S_ISDIR(statbuf.st_mode)) {
+			fprintf(stderr, "%s non e' una directory\n", dirname);
+			return -1;
+		}
+	}
+	//scrivo in path il path assoluto della directory
+	if(realpath(dirname, path) == NULL){
+		fprintf(stderr, "Errore scrittura del path assoluto della directory %s\n", dirname);
+		return -1;
+	}
+	return 0;
 }

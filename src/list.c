@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 2001112L 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -7,57 +8,68 @@
 
 
 struct node *head = NULL;
-struct node *current = NULL;
+//forse serve una mutex per quando modifico la head
 
-void list_insert(int id, char * data) {
-   struct node *link = (struct node*) malloc(sizeof(struct node));
-   if(link == NULL) {
+void cleanuplist_ins(int id, char * data) {
+   listnode_t * new = malloc(sizeof(listnode_t));
+   if(new == NULL) {
       perror("malloc");
       exit(EXIT_FAILURE);
    }
-	link->id = id;
-   strncpy(link->ht_key, data, strlen(data));
+	new->id = id;
+   strncpy(new->ht_key, data, strlen(data));
 
-   link->next = head;
-   head = link;
+   new->next = head;
+   head = new;
 }
 
-int list_isEmpty() {
-   return head == NULL;
-}
-
-char* list_find_key(int id) {
-   struct node* current = head;
-
-   if(head == NULL) return NULL;
-   while(current->id != id) {
-      if(current->next == NULL)  return NULL;
-      else current = current->next;
-   }
-   if(current == NULL) return NULL;      
-   return current->ht_key;
-}
-
-int list_delete(int id) {
-   struct node* current = head;
-   struct node* previous = NULL;
+//puo' esistere una sola entry per key
+int cleanuplist_del(char *data) {
    
-   if(head == NULL) {
-      return -1;
+   if(head == NULL) return -1;
+   listnode_t * prev;
+   listnode_t * curr;
+   listnode_t * temp;
+   //caso in cui il nodo da eliminare e' il primo
+   if(strcmp(data, head->ht_key) == 0) {
+      temp = head;
+      head = head->next;
+      free(temp);
+      return 0;
    }
-   while(current->id != id) {
-      if(current->next == NULL) {
-         return -1;
-      } else {
-         previous = current;
-         current = current->next;
+   else {
+      prev = head;
+      curr = head->next;
+      //scorro la lista 
+      while(curr != NULL && (strcmp(data, curr->ht_key) != 0)) {
+         prev = curr;
+         curr = curr->next;
+      }
+      //se mi sono fermato prima della fine lo elimino
+      if(curr != NULL) {
+         temp = curr;
+         prev->next = curr->next;
+         free(temp);
+         return 0;
       }
    }
-   if(current == head) {
-      head = head->next;
-   } else {
-      previous->next = current->next;
-   }    
-   free(current);
-   return 1;
+   return -1;
+}
+
+char * cleanuplist_getakey(int id) {
+
+   listnode_t * curr;
+   curr = head;
+   while(curr != NULL && curr->id != id) 
+         curr = curr->next;
+      
+   if(curr != NULL) 
+         return curr->ht_key;
+  
+   return NULL;
+}
+
+
+int cleanuplist_isEmpty() {
+   return head == NULL;
 }

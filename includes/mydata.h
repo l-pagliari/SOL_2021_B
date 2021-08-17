@@ -2,6 +2,7 @@
 #define MY_DATA_H
 
 #include <icl_hash.h>
+#include <queue.h>
 
 #define O_CREATE 1
 #define O_LOCK 2
@@ -10,6 +11,8 @@ extern long MAX_CAP;
 extern long CUR_CAP;
 extern long MAX_FIL;
 extern long CUR_FIL;
+
+extern queue_t * replace_queue;
 
 //usata all'avvio del server per salvare i valori di configurazione
 typedef struct {
@@ -60,15 +63,15 @@ enum {
     UNLOCK_FILE         = 8
 };
 
-struct node {
+typedef struct node {
    int id;
    char ht_key[PATH_MAX];
    struct node *next;
-};
-void list_insert(int id, char * data);
-int list_isEmpty(void);
-char* list_find_key(int id);
-int list_delete(int id);
+} listnode_t;
 
+void cleanuplist_ins(int id, char * data);
+int cleanuplist_del(char * data);
+char * cleanuplist_getakey(int id);
+int cleanlist_isEmpty(void);
 
 #endif /* MY_DATA_H */

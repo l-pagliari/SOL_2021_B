@@ -2,7 +2,7 @@
  * @file threadpool.c
  * @brief File di implementazione dell'interfaccia Threadpool
  */
-
+#define _POSIX_C_SOURCE 2001112L 
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
