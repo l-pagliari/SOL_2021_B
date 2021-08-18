@@ -148,6 +148,7 @@ int writeFile(const char *pathname, const char *dirname) {
 		return -1;
 	}
 	fclose(fp);
+
 	//invio la richiesta ed il file al server, leggo l'esito
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("write", ret, writen(connfd, &fsize, sizeof(size_t)), "inviando dati al server", "");
@@ -471,4 +472,25 @@ int setDelay(long msec) {
 	ms_delay = msec;
     delay = 1;
     return 0;
+}
+
+//richiesta di scrivere in append al file pathname i size byte contenuti dal buffer
+//l'operazione e' garantita atomica dal server
+int appendToFile(const char* pathname, void* buf, size_t size, const char* dirname) {
+
+	int ret, retval;
+	request_t * rts;
+	rts = initRequest(APPEND_FILE, pathname, 0);
+	if(rts == NULL) return -1;
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+
+	//invio la size ed il buffer
+	SYSCALL_RETURN("write", ret, writen(connfd, &size, sizeof(size_t)), "inviando dati al server", "");
+	SYSCALL_RETURN("write", ret, writen(connfd, buf, size), "inviando dati al server", "");
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+
+	while(retval == 1) retval = capacityMissHandler(dirname);
+
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+	return retval;
 }

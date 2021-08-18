@@ -15,9 +15,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <limits.h>
 
 #include <icl_hash.h>
-#include <limits.h>
+#include <mydata.h>
 
 
 
@@ -294,11 +295,7 @@ int get_n_entries( icl_hash_t *ht, int n, void ** data_arr) {
         bucket = ht->buckets[i];
         for(curr=bucket; curr!=NULL; ) {
             if(curr->key) {
-               // printf("TEST: curr->key = %s\n", (char*)curr->key);
-                //printf("TEST: curr->data = %p\n", curr->data);
-                //printf("TEST: data_arr[j] = %p\n", data_arr[j]);
                 data_arr[j] = curr->data;
-                //printf("TEST: data_arr[j] = %p\n", data_arr[j]);
                 j++;
                 if(j==n) break;
             }
@@ -307,15 +304,7 @@ int get_n_entries( icl_hash_t *ht, int n, void ** data_arr) {
         if(j==n) break;
     }
     return j;
-
-    //NON SERVE ALLOCARE LA MEMORIA DEI SINGOLI COSI? BASTA LA REFERENCE ALL'AREA DI MEMORIA? PROVIAMO.
-
-
 }
-
-
-
-
 
 /**
  * Dump the hash table's contents to the given file pointer.
@@ -325,7 +314,6 @@ int get_n_entries( icl_hash_t *ht, int n, void ** data_arr) {
  *
  * @returns 0 on success, -1 on failure.
  */
-/*
 int icl_hash_dump(FILE* stream, icl_hash_t* ht)
 {
     icl_entry_t *bucket, *curr;
@@ -337,11 +325,7 @@ int icl_hash_dump(FILE* stream, icl_hash_t* ht)
         bucket = ht->buckets[i];
         for(curr=bucket; curr!=NULL; ) {
             if(curr->key) {
-                if((((file_t*)curr->data)->contenuto) != NULL)
-                    //fprintf(stream, "icl_hash_dump: %s: %p\n", (char *)curr->key, curr->data);
-                    fprintf(stream, "hash dump: %s: %s\n", (char *)curr->key, (char*)((file_t*)curr->data)->contenuto);
-                else
-                    fprintf(stream, "hash dump: %s: FILE VUOTO\n", (char *)curr->key);
+                fprintf(stream, "%s\t[%ld bytes]\n", (char*)curr->key, ((file_t*)curr->data)->file_size);
             }
             curr=curr->next;
         }
@@ -349,6 +333,7 @@ int icl_hash_dump(FILE* stream, icl_hash_t* ht)
     return 0;
 }
 
+/*
 int hash_dump_n(FILE* stream, icl_hash_t* ht, int n)
 {
     icl_entry_t *bucket, *curr;

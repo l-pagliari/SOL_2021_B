@@ -12,6 +12,10 @@ extern long CUR_CAP;
 extern long MAX_FIL;
 extern long CUR_FIL;
 
+extern long max_saved_files;
+extern long max_reached_memory;
+extern long num_capacity_miss;
+
 extern queue_t * replace_queue;
 
 //usata all'avvio del server per salvare i valori di configurazione
@@ -60,7 +64,8 @@ enum {
     READ_N_FILES        = 5,
     REMOVE_FILE         = 6,
     LOCK_FILE           = 7,
-    UNLOCK_FILE         = 8
+    UNLOCK_FILE         = 8,
+    APPEND_FILE         = 9
 };
 
 typedef struct node {

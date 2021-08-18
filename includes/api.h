@@ -11,6 +11,8 @@ int openFile(const char *pathname, int flags);
 
 int writeFile(const char *pathname, const char *dirname);
 
+int appendToFile(const char* pathname, void* buf, size_t size, const char* dirname);
+
 int writeDirectory(const char *dirname, int max_files, const char *writedir);
 
 int readFile(const char* pathname, void** buf, size_t* size);

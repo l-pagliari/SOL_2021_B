@@ -26,12 +26,14 @@
 volatile int termina = 0;
 volatile int hangup = 0;
 
-queue_t * replace_queue;
-
 long MAX_CAP = 0;
 long CUR_CAP = 0;
 long MAX_FIL = 0;
 long CUR_FIL = 0;
+
+long max_saved_files = 0;
+long max_reached_memory = 0;
+long num_capacity_miss = 0;
 
 //char timestr[11]; usata per il timestamp nel file di log
 
@@ -57,13 +59,20 @@ static void *sigHandler(void *arg) {
 			case SIGINT:
 			case SIGTERM:
 			case SIGQUIT:
-				//printf("ricevuto segnale %s, esco\n", (sig==SIGINT) ? "SIGINT": ((sig==SIGTERM)?"SIGTERM":"SIGQUIT") );
-	   			close(fd_pipe); 
-	    		return NULL;
 			case SIGHUP:
-				printf("ricevuto segnale SIGHUP\n");
-				hangup = 1;
-				break;
+				//printf("ricevuto segnale %s, esco\n", (sig==SIGINT) ? "SIGINT": ((sig==SIGTERM)?"SIGTERM":"SIGQUIT") );
+	   			//close(fd_pipe);
+				if(writen(fd_pipe,&sig,sizeof(int))==-1){ 
+                    perror("write signal handler");
+                    return NULL;
+                }
+                //chiudo la pipe di comunicazione con thread dispatcher
+	            close(fd_pipe);  
+	            return NULL;
+			//case SIGHUP:
+			//	printf("ricevuto segnale SIGHUP\n");
+			//	hangup = 1;
+			//	break;
 			default:  ; 
 		}
     }
@@ -179,17 +188,13 @@ int main(int argc, char* argv[]) {
 
     oldmax = fdmax;
 
-    while(!termina) {
+    while(!termina) {		
 		tmpset = set;
 		if (select(fdmax+1, &tmpset, NULL, NULL, NULL) == -1) {
 			perror("select");
 			break;
 		}
-		for(int i=0; i <= fdmax; i++) {
-			if(hangup == 1 && pool->taskonthefly == 0) { //DA TESTARE
-				termina = 1;	
-				break;
-			} 
+		for(int i=0; i <= fdmax; i++) { 
 			/* GESTIONE SELECT:
 
 				1) NUOVA CONNESSIONE i == listenfd
@@ -252,7 +257,19 @@ int main(int argc, char* argv[]) {
 		  		}
 				// segnale di terminazione
 				if (i == signal_pipe[0]) {
-					termina = 1;
+					int sig;
+                    if(readn(signal_pipe[0],&sig,sizeof(int))==-1){
+                        perror("FATAL ERROR reading signal pipe");
+                        exit(EXIT_FAILURE);
+                    }
+                    if(sig==SIGHUP) {
+                    	//printf("[SERVER] Ricevuto SIGHUP (DA IMPLEMENTARE)\n");
+                    	hangup = 1; 
+                    }else {
+                   	 	//printf("[SERVER] ricevuto segnale %s, esco\n", (sig==SIGINT) ? "SIGINT": ((sig==SIGTERM)?"SIGTERM":"SIGQUIT") );
+						termina = 1;
+					}
+					close(signal_pipe[0]);
 		    		break;
 				}
 				// nuova connessione
@@ -285,8 +302,16 @@ int main(int argc, char* argv[]) {
 	}//end while
     /* FINE BLOCCO SELECT */
 
-	fprintf(stdout, "\n[SERVER CLOSING] memory occupied: %ld\n"
-		"[SERVER CLOSING] files in memory: %ld\n", CUR_CAP, CUR_FIL);
+	//fprintf(stdout, "\n[SERVER CLOSING] memory occupied: %ld\n"
+	//	"[SERVER CLOSING] files in memory: %ld\n", CUR_CAP, CUR_FIL);
+
+	printf("[SERVER CLOSING] max files saved: %ld / %ld\n"
+			"[SERVER CLOSING] max bytes occupied: %ld / %ld\n"
+			"[SERVER CLOSING] number of files replaced: %ld\n"
+			"[SERVER CLOSING] list of files currently in storage:\n",
+			max_saved_files, MAX_FIL, max_reached_memory, MAX_CAP, num_capacity_miss);
+	icl_hash_dump(stdout, hash);
+	
 
 
     destroyThreadPool(pool, 0); 

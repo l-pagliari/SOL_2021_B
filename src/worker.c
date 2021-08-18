@@ -11,6 +11,10 @@
 
 char timestr[11]; //usata per il timestamp nel file di log
 
+long max_saved_files;
+long max_reached_memory;
+long num_capacity_miss;
+
 queue_t * replace_queue;
 
 void rimpiazzamento_fifo(long fd, icl_hash_t *table);
@@ -18,8 +22,40 @@ void rimpiazzamento_fifo(long fd, icl_hash_t *table);
 void handler_openfile(long fd, icl_hash_t * table, void * key, int flag, pid_t id) {
 
 	//TEMP: USIAMO SOLO LA WRITE AL MOMENTO QUINDI VOGLIAMO IL CASO O_CREATE|O_LOCK
-	int ret, retval = 0;
+	int unused, retval = 0;
 	file_t * data;
+
+	if(flag == O_LOCK) {
+		data = icl_hash_find(table, key);
+		//il file non esiste
+		if(data == NULL) {
+			fprintf(stderr, "[SERVER] errore: file non trovato\n");
+			retval = -1; 
+		}
+		//il file e' gia' lockato da un altro client
+		else if(data->lock_flag == 1 && data->locked_by != id ) {
+			printf("[SERVER] il file e' occupato da un altro client\n");
+			retval = -1;
+		}
+		//il file non ha flag lock settato
+		else if(data->lock_flag != 1 ) {
+			int check = 1;
+			LOCK(&data->lock);
+			if(data->lock_flag != 1) {	//caso limite in cui tra l'if e il lock veniamo deschedulati 
+				data->lock_flag = 1;	//e il file viene lockato da un altro worker
+				data->locked_by = id;
+			} else check = 0;
+			UNLOCK(&data->lock);
+			if(check){
+				fprintf(stdout, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);
+				//devo ricordarmi da qualche parte che il file identificato da key e' stato lockato da id
+				cleanuplist_ins(id, key);
+			}
+		}
+		else printf("[SERVER] errore sconosciuto nell'apertura file\n");
+		SYSCALL_EXIT("write", unused, write(fd, &retval, sizeof(int)), "inviando dati al client", "");
+		return;			
+	}
 	if(icl_hash_find(table, key) != NULL){
 			fprintf(stderr, "%s esiste gia' nel server\n", (char*)key);
 			retval = -1;
@@ -45,15 +81,8 @@ void handler_openfile(long fd, icl_hash_t * table, void * key, int flag, pid_t i
 		pthread_cond_init(&(data->cond), NULL);
 		fprintf(stdout, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);
 
-		
 		//devo ricordarmi da qualche parte che il file identificato da key e' stato lockato da id
-		//printf("[TEST] inserisco nella lista il file che ho lockato (id=%d)\n", id);
-		//list_insert(id, (char*)key);
-
-
-		/*INSERIRE KEY E ID NELLA CLEANUP LIST */
 		cleanuplist_ins(id, key);
-
 
 		//inserisco nella tabella il nuovo file
 		if(icl_hash_insert(table, key, data) == NULL) {
@@ -63,7 +92,7 @@ void handler_openfile(long fd, icl_hash_t * table, void * key, int flag, pid_t i
 	}
 	else printf("flags non ancora supportati\n");
 
-	SYSCALL_EXIT("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
+	SYSCALL_EXIT("write", unused, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
 }
 
 void handler_writefile(long fd, icl_hash_t * table, void * key) {
@@ -84,25 +113,17 @@ void handler_writefile(long fd, icl_hash_t * table, void * key) {
 		SYSCALL_EXIT("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
 		return;
 	}
-	
 	CUR_CAP = CUR_CAP + fsize;
 	CUR_FIL++;
+	//aggiorno i valori per le statistiche finali
+	if(CUR_FIL > max_saved_files) max_saved_files = CUR_FIL;
+	if(CUR_CAP > max_reached_memory) max_reached_memory = CUR_CAP;
 	while(CUR_CAP > MAX_CAP || CUR_FIL > MAX_FIL) {
-
-		//printf("TESTSERVER: devo fare spazio per il nuovo file, lancio l'algoritmo di rimpiazzamento\n");
-
-
-		//comunico al client che il server deve espellere uno o piu' file per fare spazio
-		//retval = 1;
-		//SYSCALL_EXIT("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
 		rimpiazzamento_fifo(fd, table);
-		//printf("TESTSERVER: sono tornato dal rimpiazzamento\n");
-
+		num_capacity_miss++;
 	}
 	retval = 0;
 	SYSCALL_EXIT("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
-
-	//printf("TESTSERVER: sto per scrivere %s\n", (char*)key);
 
 	//a questo punto ho sicuramente abbastanza spazio, salvo il file in memoria
 	data = icl_hash_find(table, key);
@@ -110,13 +131,9 @@ void handler_writefile(long fd, icl_hash_t * table, void * key) {
 		CHECK_EQ_EXIT("malloc", NULL,(data->contenuto = malloc(fsize)), "allocando la stringa data", "");	
 		memcpy(data->contenuto, buf, fsize);
 		data->file_size = fsize;
-
-
-
+		//metto il nuovo file nella coda di rimpiazzamento
 		q_put(replace_queue, key);
-
 		fprintf(stdout, "%s[LOG] Writed file %s (%d Bytes)\n", tStamp(timestr), (char*)key, (int)fsize);
-		
 	}
 	else fprintf(stderr, "[SERVER] errore nella scrittura del file\n"); //mai successo ma controllo per sicurezza
 }
@@ -425,6 +442,68 @@ void rimpiazzamento_fifo(long fd, icl_hash_t *table) {
 		//} while(retval);
 }
 
+void handler_append(long fd, icl_hash_t * table, void * key, pid_t id) {
+
+	int ret, retval;
+	size_t fsize;
+	void * buf;
+	file_t *data;
+	SYSCALL_EXIT("read", ret, readn(fd, &fsize, sizeof(size_t)), "leggendo dati dal client", "");
+	CHECK_EQ_EXIT("malloc", NULL,(buf = malloc(fsize)), "allocando la stringa buf", "");
+	SYSCALL_EXIT("read", ret, readn(fd, buf, fsize), "leggendo dati dal client", "");
+
+	//CONTROLLO MEMORIA
+	if(fsize > MAX_CAP) {
+		fprintf(stderr, "[SERVER] Buffer troppo grande, impossibile salvarlo\n");
+		icl_hash_delete(table, key, NULL, free);
+		retval = -1;
+		SYSCALL_EXIT("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
+		return;
+	}
+	CUR_CAP = CUR_CAP + fsize;
+	//aggiorno i valori per le statistiche finali
+	if(CUR_CAP > max_reached_memory) max_reached_memory = CUR_CAP;
+	while(CUR_CAP > MAX_CAP) {
+		rimpiazzamento_fifo(fd, table);
+		num_capacity_miss++;
+	}
+	retval = 0;
+	SYSCALL_EXIT("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
+
+	//a questo punto ho sicuramente abbastanza spazio, appendo il buffer al file
+	data = icl_hash_find(table, key);
+	if(data != NULL) {
+
+		/* TBI: CONTROLLO LOCK DEL FILE */
+
+		//creo un nuovo buffer
+		size_t newsize = data->file_size + fsize;
+		char * newcont = malloc(newsize);
+		if(newcont==NULL) {
+			perror("malloc");
+			exit(EXIT_FAILURE);
+		}
+		memcpy(newcont, data->contenuto, data->file_size);
+		memcpy(newcont+data->file_size-1, buf, fsize);
+		newcont[newsize] = '\0';
+
+		//sostituisco il nuovo al vecchio
+		void *tmp = data->contenuto;
+		data->contenuto = newcont;
+		data->file_size = strlen(newcont)+1;
+		free(tmp);
+
+		fprintf(stdout, "%s[LOG] Appended %d Bytes to file %s\n", tStamp(timestr), (int)fsize, (char*)key);
+
+		/* TBI: UNLOCK DEL FILE */
+	}
+	else {
+		fprintf(stderr, "[SERVER] errore nella scrittura del file\n"); //mai successo ma controllo per sicurezza
+		retval = -1;
+	}
+	SYSCALL_EXIT("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
+}
+
 void workerF(void *arg) {
 	assert(arg);
 
@@ -491,6 +570,11 @@ void workerF(void *arg) {
 
     	case REMOVE_FILE:
     		handler_removefile(connfd, htab, req->filepath, req->cid);
+    		SYSCALL_EXIT("write", notused, write(req_pipe, &connfd, sizeof(long)), "scrivendo nella request pipe", "");
+    		break;
+
+    	case APPEND_FILE:
+    		handler_append(connfd, htab, req->filepath, req->cid);
     		SYSCALL_EXIT("write", notused, write(req_pipe, &connfd, sizeof(long)), "scrivendo nella request pipe", "");
     		break;
     }

@@ -46,9 +46,12 @@ int main(int argc, char *argv[]) {
     char *endptr;
     long val;
     int quiet = 1;	
-    char dirpath[PATH_MAX];	
+    char rdirpath[PATH_MAX];
+    char wdirpath[PATH_MAX];	
+    char *append_buf;
+    size_t append_len;
 
-    while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:p")) != -1) {
+    while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:pa:")) != -1) {
     	switch(opt) {
 			
 			case 'h': 
@@ -176,8 +179,18 @@ int main(int argc, char *argv[]) {
 						perror("malloc");
 						exit(EXIT_FAILURE);
 					}
+					/*
 					strncpy(read_dir, optarg, strlen(optarg));
 					saveread = 1;
+					*/
+					r = makeDir(optarg, rdirpath);
+					if(r == -1) {
+						fprintf(stderr, "input errato, usare -h per aiuto\n");
+						exit(EXIT_FAILURE);
+					}
+					read_dir = rdirpath;
+					saveread = 1;
+
 				}
 				else {
 					fprintf(stderr, "input errato, usare -h per aiuto\n");
@@ -191,12 +204,12 @@ int main(int argc, char *argv[]) {
 						perror("malloc");
 						exit(EXIT_FAILURE);
 					}
-					r = makeDir(optarg, dirpath);
+					r = makeDir(optarg, wdirpath);
 					if(r == -1) {
 						fprintf(stderr, "input errato, usare -h per aiuto\n");
 						exit(EXIT_FAILURE);
 					}
-					write_dir = dirpath;
+					write_dir = wdirpath;
 					savewrite = 1;
 				}
 				else {
@@ -267,7 +280,36 @@ int main(int argc, char *argv[]) {
     			}
     			quiet = 0;
     			printf("[CLIENT] Stampe su stdout abilitate\n");
-    			break;
+    			break;	
+
+    		//principalmente per il testing di append
+    		//imput della forma -a filename,stringa
+    		case 'a':
+    			if(connection_established == 0) {
+					fprintf(stderr, "connesione non stabilita\n");
+					exit(EXIT_FAILURE);
+				}
+				token = strtok_r(optarg, ",", &save);
+				token2 = strtok_r(NULL, ",", &save);
+				if(token2 == NULL) {
+					fprintf(stderr, "input errato, usare -h per aiuto\n");
+               		exit(EXIT_FAILURE);
+				}
+				append_len = strlen(token2)+1;
+				append_buf = malloc(append_len);
+				if(append_buf == NULL) {
+					perror("malloc");
+					exit(EXIT_FAILURE);
+				}
+				strncpy(append_buf, token2, append_len);
+				//prima dell'append faccio una openfile con O_LOCK
+				r = openFile(token, O_LOCK);
+				if(r != -1){
+					r = appendToFile(token, append_buf, append_len, write_dir);
+					if(r == -1) fprintf(stderr, "errore append\n");
+				}
+				break;
+
 
 			//getopt error handling manuale per gestire gli argomenti opzionali
 			case '?': 
@@ -300,29 +342,28 @@ int main(int argc, char *argv[]) {
 						
     }
     if(sockname) free(sockname);
-    if(read_dir) free(read_dir);
     return 0;
 }
 
 void usage(void) {
 	printf("***LISTA DELLE OPZIONI ACCETTATE***\n\n"
-		"-f filename: specifica il socket AF_UNIX a cui connettersi;\n\n"
-		"-w dirname[,n=0]: invia al server i file nella cartella 'dirname'. Se contiene altre directory "
+		"-f filename: \nspecifica il socket AF_UNIX a cui connettersi;\n\n"
+		"-w dirname[,n=0]: \ninvia al server i file nella cartella 'dirname'. Se contiene altre directory "
 		"vengono visitate ricorsivamente fino a quando non si leggono n files. Se n non e' specificato o "
 		"n=0 non c'e' limite superiore ai file inviati al server;\n\n"
-		"-W file1[,file2]: lista di nome di file da scrivere nel server separati da ',';\n\n"
+		"-W file1[,file2]: \nlista di nome di file da scrivere nel server separati da ',';\n\n"
 		"-D dirname: directory dove scrivere i file espulsi dal server in seguito di capacity misses per "
 		"servire le scritture -w e -W; -D deve essere usata congiuntamente a -w o -W altrimenti genera errore;\n\n"
-		"-r file1[,file2]: lista di nomi di file da leggere dal server separati da ',';\n\n"
-		"-R [n=0]: tale opzione permette di leggere 'n' file qualsiasi attualmente memorizzati sul server; "
+		"-r file1[,file2]: \nlista di nomi di file da leggere dal server separati da ',';\n\n"
+		"-R [n=0]: \ntale opzione permette di leggere 'n' file qualsiasi attualmente memorizzati sul server; "
 		"se n=0 oppure e' omessa allora vengono letti tutti i file presenti sul server;\n\n"
-		"-d dirname: cartella in memoria secondaria dove scrivere tutti i file letti dal server con l'opzione "
+		"-d dirname: \ncartella in memoria secondaria dove scrivere tutti i file letti dal server con l'opzione "
 		"-r o -R; tale opzione va usata congiuntamente a quest'ultime altrimenti viene generato un errore;\n\n"
-		"-t time: tempo in millisecondi che intercorre tra l'invio di due richieste successive al server;\n\n"
-		"-l file1[,file2]: lista di nomi di file su cui acquisire la mutua esclusione;\n\n"
-		"-u file1[,file2]: lista di nomi di file su cui rilasciare la mutua esclusione;\n\n"
-		"-c file1[,file2]: lista di file da rimuovere dal server se presenti;\n\n"
-		"-p: abilita le stampe sullo standard output per ogni operazione.\n\n"
+		"-t time: \ntempo in millisecondi che intercorre tra l'invio di due richieste successive al server;\n\n"
+		"-l file1[,file2]: \nlista di nomi di file su cui acquisire la mutua esclusione;\n\n"
+		"-u file1[,file2]: \nlista di nomi di file su cui rilasciare la mutua esclusione;\n\n"
+		"-c file1[,file2]: \nlista di file da rimuovere dal server se presenti;\n\n"
+		"-p: \nabilita le stampe sullo standard output per ogni operazione.\n\n"
 		"Gli argomenti possono essere ripetuti piu' volte (ad eccezione di '-f', '-h', '-p').\n");
 }
 
