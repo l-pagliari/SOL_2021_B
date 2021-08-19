@@ -23,21 +23,34 @@
 #define CONFIG_PATH "bin/config.txt"
 #endif
 
+//variabili globali di terminazione
 volatile int termina = 0;
 volatile int hangup = 0;
+volatile int clients = 0;
 
+//indirizzi e descrittori inizializzati dal
+//server e utilizzati dai worker thread
+icl_hash_t * table = NULL;
+int req_pipe = 0;
+
+//variabili globali inizalizzate dal thread master e utilizzate dai
+//worker per conoscere ed aggiornare lo stato dello storage
 long MAX_CAP = 0;
 long CUR_CAP = 0;
 long MAX_FIL = 0;
 long CUR_FIL = 0;
-
 long max_saved_files = 0;
 long max_reached_memory = 0;
 long num_capacity_miss = 0;
 
-int clients = 0;
+pthread_mutex_t storemtx = PTHREAD_MUTEX_INITIALIZER;
 
-//char timestr[11]; usata per il timestamp nel file di log
+//usata per il timestamp nel file di log
+char timestr[11];
+
+/* AGGIUNGERE QUI LA VARIABILE GLOBALE INDIRIZZO FILE LOG UTILIZZATA DAL WORKER */
+/* SECONDO LO STESSO PRINCIPIO ANCHE IL POINTER ALLA HASH TABLE */
+/* PRINCIPIO = PASSO SOLO QUELLO CHE PUO' CAMBIARE / NON SONO ANCORA CONVINTO */
 
 //usata per passare gli argomenti al signal handler
 typedef struct {
@@ -45,11 +58,14 @@ typedef struct {
     int           signal_pipe;  
 } sigHandler_t;
 
+/* riceve in input il set di segnali e l'indirizzo di scrittura di una pipe
+** letta dalla select del server; alla ricezione di un segnale lo scrive 
+** nella pipe e termina
+*/
 static void *sigHandler(void *arg) {
 	sigset_t *set = ((sigHandler_t*)arg)->set;
     int fd_pipe = ((sigHandler_t*)arg)->signal_pipe;
-
-    for(;;) {
+	for(;;) {
 		int sig;
 		int r = sigwait(set, &sig);
 		if(r != 0) {
@@ -61,25 +77,17 @@ static void *sigHandler(void *arg) {
 			case SIGINT:
 			case SIGTERM:
 			case SIGQUIT:
-				//printf("ricevuto segnale %s, esco\n", (sig==SIGINT) ? "SIGINT": ((sig==SIGTERM)?"SIGTERM":"SIGQUIT") );
-				if(writen(fd_pipe,&sig,sizeof(int))==-1){ 
-                    perror("write signal handler");
-                    return NULL;
-                }
-	            close(fd_pipe);  
-	            return NULL;
 			case SIGHUP:
 				if(writen(fd_pipe,&sig,sizeof(int))==-1){ 
                     perror("write signal handler");
                     return NULL;
-                }
-                return NULL;
+                } 
+	            return NULL;
 			default:  ; 
 		}
     }
     return NULL;	   
 }
-
 
 int main(int argc, char* argv[]) {
 
@@ -108,13 +116,13 @@ int main(int argc, char* argv[]) {
     	perror("sigaction"); 
     	exit(EXIT_FAILURE); 
     } 
+    //creo la pipe per la comunicazione sighandler-server
     int signal_pipe[2];
     if(pipe(signal_pipe)==-1) { 
     	perror("signal pipe");
     	exit(EXIT_FAILURE);
     }
-    //close(signal_pipe[1]);
-    
+    //genero il thread signal handler e gli passo come argomenti maschera segnali e pipe
     pthread_t sighandler_thread;
     sigHandler_t handlerArgs = { &mask, signal_pipe[1] };
    	if(pthread_create(&sighandler_thread, NULL, sigHandler, &handlerArgs) != 0) { 
@@ -123,7 +131,7 @@ int main(int argc, char* argv[]) {
    	}
 	/*	FINE BLOCCO GESTIONE SEGNALI */
 
-	/* BLOCCO SOCKET+STRUTTURE DATI */
+	/* BLOCCO SOCKET E STRUTTURE DATI */
 	int listenfd;
     if((listenfd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) { 
     	perror("socket");
@@ -133,8 +141,7 @@ int main(int argc, char* argv[]) {
     memset(&serv_addr, '0', sizeof(serv_addr));
     serv_addr.sun_family = AF_UNIX;    
     strncpy(serv_addr.sun_path, config->sock_name, strlen(config->sock_name)+1);
-
-    if(bind(listenfd, (struct sockaddr*)&serv_addr,sizeof(serv_addr)) == -1) { 
+	if(bind(listenfd, (struct sockaddr*)&serv_addr,sizeof(serv_addr)) == -1) { 
     	perror("bind"); 
     	exit(EXIT_FAILURE);
     }
@@ -142,60 +149,67 @@ int main(int argc, char* argv[]) {
     	perror("listen");
     	exit(EXIT_FAILURE);
     }
+    /* creo la pipe per la comunicazione manager-worker */
 	int request_pipe[2];
     if(pipe(request_pipe)==-1) {
     	perror("request_pipe");
+    	unlink(config->sock_name);
+    	free_config(config);
     	exit(EXIT_FAILURE);
     }
-    //close(request_pipe[1]);
-
+    req_pipe = request_pipe[1];
+	/*creo il threadpool per gestire le richieste utilizzo il modello 1 thread 1 richiesta, 
+      nessun task pendente se tutti i thread sono occupati */
     threadpool_t *pool = NULL;
-	pool = createThreadPool(config->num_workers, config->num_workers); //il secondo valore potrebbe anche essere 0, not final
+	pool = createThreadPool(config->num_workers, 0); 
     if(!pool) {
     	fprintf(stderr, "errore nella creazione del thread pool\n");
+    	unlink(config->sock_name);
+		free_config(config);
     	exit(EXIT_FAILURE);
     }
+    /* creo la tabella hash utilizzata come data structure per lo storage server, il numero
+       massimo di file(entry) che puo' ospitare e' fisso quindi non occorre fare resize in seguito */
+	
 
-    icl_hash_t *hash = NULL;
-    hash = icl_hash_create(config->mem_files, NULL, NULL);
-    if (!hash) {
+	//icl_hash_t *hash = NULL;
+    //hash 
+    table = icl_hash_create(config->mem_files, NULL, NULL);
+    if (!table) {
     	fprintf(stderr, "errore nella creazione della tabella hash\n");
-    	destroyThreadPool(pool, 0);
+    	destroyThreadPool(pool, 1);
+    	unlink(config->sock_name);
+    	free_config(config);
     	exit(EXIT_FAILURE);
 	}
-
+	/* inizializzo una coda che viene usata dai thread worker per la gestione del capacity miss;
+	   mantiene l'ordine dei file inseriti necessario per la politica di rimpiazzamento */
 	replace_queue = init_queue();
-
-
-
-
+	if(!replace_queue) {
+    	fprintf(stderr, "errore nella creazione della replace queue\n");
+    	destroyThreadPool(pool, 0); 
+    	icl_hash_destroy(table, &free, &freeFile);
+    	unlink(config->sock_name);
+    	free_config(config);
+    	exit(EXIT_FAILURE);
+    }
 	/* FINE BLOCCO SOCKET+STRUTTURE DATI */
 
 	/* BLOCCO SELECT */
 	char buf[BUFSIZE];
 	int n;
-
 	fd_set set, tmpset;
     FD_ZERO(&set);
     FD_ZERO(&tmpset);
-
-    FD_SET(listenfd, &set);        
+	FD_SET(listenfd, &set);        
     FD_SET(signal_pipe[0], &set); 
     FD_SET(request_pipe[0], &set); 
     
-    int fdmax, oldmax;
+  	int fdmax, oldmax;
     fdmax = (listenfd > signal_pipe[0]) ? listenfd : signal_pipe[0];
     fdmax = (fdmax > request_pipe[0]) ? fdmax : request_pipe[0];
-
-    oldmax = fdmax;
-
-    while(!termina) {		
-
-    	//printf("TEST: sto per fare la select, cliens connessi: %d\n", clients);
- 
-
-
-
+	oldmax = fdmax;
+	while(!termina) {		
 		tmpset = set;
 		if (select(fdmax+1, &tmpset, NULL, NULL, NULL) == -1) {
 			perror("select");
@@ -204,28 +218,26 @@ int main(int argc, char* argv[]) {
 		for(int i=0; i <= fdmax; i++) { 
 			/* GESTIONE SELECT:
 
-				1) NUOVA CONNESSIONE i == listenfd
+				1) NUOVA CONNESSIONE(i == listenfd)
 					-> aggiungo il nuovo descrittore al set
-					-> se ho ricevuto SIGHUP chiudo subito la nuova richiesta
+					-> incremento il counter dei client connessi
+					
+				2) FINE TASK WORKER(i == request_pipe[0])
+					-> una richiesta del client e' stata gestita
+					-> leggo dalla pipe il file descriptor 
+					-> lo aggiungo nuovamente al set
 
-				2) SIGNAL PIPE i == signal_pipe[0]
-
-					-> setto variabile di terminazione ed esco dal loop
-
-				3) REQUEST PIPE i == request_pipe[0]
-
-					-> leggo dalla pipe il file descriptor
-					-> lo aggiungo al set
+				3) RICEZIONE SEGNALE(i == signal_pipe[0])
+					-> leggo il segnale ricevuto e decido il tipo di chiusura
+					-> setto variabile di terminazione
 
 				4) NUOVA RICHIESTA DA UN CLIENT CONNESSO else
-
 					-> setto gli argomenti da passare
 					-> rimuovo il descrittore di connessione dal set
 					-> passo gli argomenti e la thread function ad addToThreadPool */
 
 			if (FD_ISSET(i, &tmpset)) {
 				long connfd;
-
 				// e' una nuova richiesta di connessione
 				if (i == listenfd) {  
 		  			if((connfd = accept(listenfd, (struct sockaddr*)NULL, NULL)) == -1) {
@@ -233,16 +245,15 @@ int main(int argc, char* argv[]) {
 		  				termina = 1;
 		  				break;
 		  			}
-					
+		  			/* se ho ricevuto il segnale SIGHUP rifiuto tutte le connessioni attendo notifica
+		  			   di terminazione dal worker thread che chiude la connessione con l'ultimo server */
 					if(hangup){
-						printf("SERVER SHUTTING DOWN... unable to accept new connections\n"); //DA TESTARE
+						printf("SERVER SHUTTING DOWN... unable to accept new connections\n");
 					 	close(connfd);
 					 	continue;
 					}
-
 					clients++;
-
-		  			FD_SET(connfd, &set);  
+					FD_SET(connfd, &set);  
 		  			if(connfd > fdmax) {
 		  				oldmax = fdmax; 
 		  				fdmax = connfd; 
@@ -264,40 +275,31 @@ int main(int argc, char* argv[]) {
 		  			} 
 		  			continue;
 		  		}
-				// segnale di terminazione
+				// il signal handler ha letto un segnale, lo leggo
 				if (i == signal_pipe[0]) {
 					int sig;
                     if(readn(signal_pipe[0],&sig,sizeof(int))==-1){
                         perror("FATAL ERROR reading signal pipe");
                         exit(EXIT_FAILURE);
                     }
+                    /* due tipi di chiusura del server:
+                       hangup	-> 	non accetto piu' nuove connessioni, quando tutti i
+                       			 	client al momento connessi hanno finito, termino;
+                       termina 	->	forzo la chiusura di tutti worker attivi e termino 
+                       				il prima possibile */
                     if(sig==SIGHUP) {
-                    	printf("[SERVER] Ricevuto SIGHUP (DA IMPLEMENTARE)\n");
+                    	fprintf(stdout, "%s[LOG] Recieved SIGHUP, closing upcoming connections\n",tStamp(timestr));
                     	hangup = 1;
-          			}else {
-                   	 	//printf("[SERVER] ricevuto segnale %s, esco\n", (sig==SIGINT) ? "SIGINT": ((sig==SIGTERM)?"SIGTERM":"SIGQUIT") );
+          			}else 
 						termina = 1;
-					}
 		    		break;
 				}
-				// nuova connessione
+				// nuova richiesta da un client connesso
 				connfd = i;
-
-		    	workerArg_t * wArg = NULL;
-		    	wArg = malloc(sizeof(workerArg_t));
-		    	if(!wArg){
-		    		perror("malloc workerArg");
-		    		termina = 1;
-		    		break;
-		    	}
-		    	wArg->clientfd = connfd;
-		    	wArg->pipe = request_pipe[1];
-		    	wArg->hash_table = hash;
-
 				if(fdmax == connfd) fdmax = oldmax;
 				FD_CLR(connfd, &set);
-
-				n = addToThreadPool(pool, workerF, (void*)wArg);
+				//notifico il pool che c'e' un nuovo task
+				n = addToThreadPool(pool, workerF, &connfd);
 		    	if (n==0) 
 		    		continue; 
 		    	if (n<0) 
@@ -310,30 +312,24 @@ int main(int argc, char* argv[]) {
 	}//end while
     /* FINE BLOCCO SELECT */
 
-	//fprintf(stdout, "\n[SERVER CLOSING] memory occupied: %ld\n"
-	//	"[SERVER CLOSING] files in memory: %ld\n", CUR_CAP, CUR_FIL);
-
+    /* BLOCCO STAMPA CHIUSURA SERVER E CLEANUP */
 	printf("[SERVER CLOSING] max files saved: %ld / %ld\n"
 			"[SERVER CLOSING] max bytes occupied: %ld / %ld\n"
 			"[SERVER CLOSING] number of files replaced: %ld\n"
 			"[SERVER CLOSING] list of files currently in storage:\n",
 			max_saved_files, MAX_FIL, max_reached_memory, MAX_CAP, num_capacity_miss);
-	icl_hash_dump(stdout, hash);
+	icl_hash_dump(stdout, table);
 	
-
-
-    destroyThreadPool(pool, 0); 
-    icl_hash_destroy(hash, NULL, free);
+	destroyThreadPool(pool, 0); 
+    icl_hash_destroy(table, &free, &freeFile);
     unlink(config->sock_name);
+    free_config(config);
+    freeQueue(replace_queue);
+    cleanuplist_free();
     pthread_join(sighandler_thread, NULL);
     return 0;    
 }
 
-
-/* TO DO LIST:
-	
-	-LOGGING [PARZIALE]
-	-in seguto passare al worker l'indirizzo del log
-	(forse il server quando torna il file descriptor mi ritorna insieme anche l'esito dell'operazione?)
-	->pacchetto contenente tutte le informazioni da scrivere nel log
+/* TO DO:
+	-endpoint di scrittura pipe sig atomic
 */

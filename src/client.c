@@ -22,6 +22,8 @@
 #define RETRY_TIME_MS 500
 #endif
 
+int quiet = 1;	
+
 void usage(void);
 int makeDir(const char* dirname, char *path);
 
@@ -45,7 +47,6 @@ int main(int argc, char *argv[]) {
 	//usati da strtol in R
     char *endptr;
     long val;
-    int quiet = 1;	
     char rdirpath[PATH_MAX];
     char wdirpath[PATH_MAX];	
     char *append_buf;
@@ -59,16 +60,24 @@ int main(int argc, char *argv[]) {
 				exit(EXIT_SUCCESS);
 				break;
 
+			case 'p':
+    			if(!quiet) {
+    				fprintf(stderr, "input errato, usare -h per aiuto\n");
+               		exit(EXIT_FAILURE);
+    			}
+    			quiet = 0;
+    			break;	
+
 			case 'f':
 				if(connection_established == 1) {
 					fprintf(stderr, "input errato, usare -h per aiuto\n");
 					exit(EXIT_FAILURE);
 				}
-				if((sockname = malloc(strlen(optarg)*sizeof(char))) == NULL ) {
+				if((sockname = malloc(BUFSIZE*sizeof(char))) == NULL ) {
 					perror("malloc");
 					exit(EXIT_FAILURE);
 				}
-				strncpy(sockname, optarg, strlen(optarg));
+				strncpy(sockname, optarg, BUFSIZE);
 
 				struct timespec timeout;
 				timeout.tv_sec = MAX_WAIT_TIME_SEC;
@@ -89,7 +98,7 @@ int main(int argc, char *argv[]) {
 				}
 				token = strtok_r(optarg, ",", &save);
 				do{
-					r = openFile(token, O_CREATE | O_LOCK);
+					r = openFile(token, O_CREATE|O_LOCK);
 					if(r == 0) {
 						r = writeFile(token, write_dir);
 						if(r == -1) printf("[CLIENT] Errore nella scrittura del file\n");
@@ -272,15 +281,6 @@ int main(int argc, char *argv[]) {
            		setDelay(val);
            		if(!quiet) printf("[CLIENT] Abilitato il ritardo tra le richieste di %ldmsec\n", val);
     			break;
-
-    		case 'p':
-    			if(!quiet) {
-    				fprintf(stderr, "input errato, usare -h per aiuto\n");
-               		exit(EXIT_FAILURE);
-    			}
-    			quiet = 0;
-    			printf("[CLIENT] Stampe su stdout abilitate\n");
-    			break;	
 
     		//principalmente per il testing di append
     		//imput della forma -a filename,stringa

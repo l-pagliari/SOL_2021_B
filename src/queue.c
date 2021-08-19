@@ -10,9 +10,8 @@
 queue_t* init_queue(){
 
 	queue_t * q;
-	q = malloc(sizeof(queue_t));
+	q = (queue_t*)malloc(sizeof(queue_t));
 	if(q == NULL) {
-		perror("malloc");
 		return NULL;
 	}
 	q->head = NULL;
@@ -104,6 +103,23 @@ void q_remove(queue_t *q, char *key) {
 		}
 		free(tmp);
 	}
+}
+
+void freeQueue(queue_t *q) {
+	if(isEmpty(q)) {
+		pthread_mutex_destroy(&q->qlock);
+		free(q);
+		return;
+	}
+	LOCK(&q->qlock);
+	while(q->head != NULL) {
+		node_t * tmp = q->head;
+		q->head = q->head->next;
+		free(tmp);
+	}
+	UNLOCK(&q->qlock);
+	pthread_mutex_destroy(&q->qlock);
+	free(q);
 }
 
 int isEmpty(queue_t *q){

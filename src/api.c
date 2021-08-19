@@ -26,18 +26,24 @@ char *socket_name;
 long ms_delay = 0;
 int delay = 0;
 
-//inizializza la richiesta da mandare al server
+int quiet;
+
+/* inizializzo la richiesta da mandare al server sottoforma di una struct, uguale
+   per ogni richiesta */
 request_t * initRequest(int t, const char * fname, int n){
 	request_t * req;
-	if((req = malloc(sizeof(request_t))) == NULL) {
+	if((req = (request_t*)malloc(sizeof(request_t))) == NULL) {
 		perror("malloc");
 		return NULL;
 	}
 	req->type = t;
+	/*utilizzo il pid come identificativo del client, ci sono altri modi se non 
+	  sufficiente ma per gli scopi del progetto lo ritengo un buon compromesso */
 	req->cid = getpid();
 	req->arg = n;
 	if(fname != NULL){
-		//devo ricavare il path assoluto del file
+		/* ricavo il path assoluto del file che viene usato come chiave unica per identificare
+		   il file nel server */
 		char abs_path[PATH_MAX];
 		char *ptr = NULL;
 		if((ptr = realpath(fname, abs_path)) == NULL) {
@@ -45,11 +51,13 @@ request_t * initRequest(int t, const char * fname, int n){
 			errno = EINVAL;
 			return NULL;
 		}
-		strncpy(req->filepath, abs_path, PATH_MAX);
+		strncpy(req->filepath, abs_path, PATH_MAX+1);
 	}
 	return req;
 }
 
+/* prova a connettersi al server attraverso il socket sockname, se fallisce 
+   riprova ad intervalli regolari msec fino al passaggio del tempo assoluto abstime */
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
 
 	struct sockaddr_un serv_addr;
@@ -63,7 +71,7 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     struct timespec sleeptime;
     sleeptime.tv_sec = msec / 1000;
     sleeptime.tv_nsec = msec * 1000000;
-
+    //tento a riconnettermi se la connect fallisce
     while(connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) != 0) {
     	nanosleep(&sleeptime, NULL);
     	maxtime = maxtime + msec;
@@ -73,6 +81,7 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     		return -1;
 		}
     }
+    //mi sono connesso al socket, mando al server il nome del client
     int ret;
     request_t * rts;
     rts = initRequest(OPEN_CONNECTION, NULL, 0);
@@ -80,8 +89,9 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     SYSCALL_RETURN("write", ret, writen(sockfd, rts, sizeof(request_t)), "inviando dati al server", "");
 
 	connfd = sockfd;
-    socket_name = malloc(strlen(sockname)*sizeof(char));
-    strncpy(socket_name, sockname, strlen(sockname));
+    socket_name = malloc(BUFSIZE*sizeof(char));
+    strncpy(socket_name, sockname, BUFSIZE);
+    if(!quiet) fprintf(stdout, "[CLIENT] Connesso al socket %s\n", socket_name);
     free(rts);
 
     if(delay) msleep(ms_delay);;
@@ -89,7 +99,7 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
 }
 
 int closeConnection(const char *sockname) {
-	if(strncmp(sockname, socket_name, strlen(sockname)) != 0) {
+	if(strncmp(sockname, socket_name, BUFSIZE) != 0) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -100,8 +110,10 @@ int closeConnection(const char *sockname) {
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 
 	close(connfd);
+
 	connfd = -1;
   	if(socket_name) free(socket_name);
+  	if(!quiet) fprintf(stdout, "[CLIENT] Chiusa la connessione con il socket %s\n", socket_name);
   	free(rts);
 	return 0;
 }
@@ -126,12 +138,17 @@ int writeFile(const char *pathname, const char *dirname) {
 	request_t * rts;
 	rts = initRequest(WRITE_FILE, pathname, 0);
 	if(rts == NULL) return -1;
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	//leggo se il server e' pronto a ricevere il file
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+	if(retval == -1) return -1;
 	
 	FILE *fp;
-	char *buffer;
+	void *buffer;
 	size_t fsize, num;
 	struct stat statbuf;
 
+	// utilizzo stat per conoscere in anticipo la size del file che dovro' leggere 
 	SYSCALL_RETURN("stat", ret, stat(pathname, &statbuf), "facendo la stat del file in lettura", "");
 	if((fp = fopen(pathname, "r")) == NULL) {
 		perror("fopen");
@@ -148,23 +165,26 @@ int writeFile(const char *pathname, const char *dirname) {
 		return -1;
 	}
 	fclose(fp);
-
-	//invio la richiesta ed il file al server, leggo l'esito
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	//invio size e contenuto al server
 	SYSCALL_RETURN("write", ret, writen(connfd, &fsize, sizeof(size_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("write", ret, writen(connfd, buffer, fsize), "inviando dati al server", "");
-
+	//il server mi comunica se c'e' abbastanza spazio in memoria
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-
-	//FINO A QUI FUNZIONA BENE
-
-	//A questo punto possono succedere tre cose: 
-	//1.retval == 0: ho finito
+	//1.retval == 0: c'e' spazio
 	//2.retval == 1: il server deve espellere uno o piu' file per fare spazio al nuovo
-	//3.retval ==-1: si e' verificato un qualche tipo di errore nella scrittura
-
+	//3.retval ==-1: si e' verificato un qualche tipo di errore
+	if(retval == -1) {
+		free(buffer);
+		free(rts);
+		return -1;
+	}
+	//uso un handler per gestire i file che il server mi manda per fare spazio
 	while(retval == 1) retval = capacityMissHandler(dirname);
-
+	//leggo l'esito della scrittura
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+	if(!quiet && retval == 0) 
+		fprintf(stdout, "[CLIENT] Scritto sul server il file %s (%ld Bytes)\n", pathname, fsize);
+	
 	free(buffer);
 	free(rts);
 	if(delay) msleep(ms_delay);

@@ -34,24 +34,27 @@ config_t * read_config(char * conf_path) {
 	config_t * conf;
 	FILE *fp;
 
+	//alloco lo spazio per le variabili e apro il file
 	CHECK_EQ_EXIT("malloc", NULL, (buffer = malloc(BUFSIZE*sizeof(char))), "buffer configurazione server\n","");
 	CHECK_EQ_EXIT("malloc", NULL, (bufptr = malloc(NUM_CONF_VALS*sizeof(char*))), "bufptr configurazione server\n","");
 	CHECK_EQ_EXIT("malloc", NULL, (conf = malloc(sizeof(config_t))), "config_t configurazione server\n", "");
 	CHECK_EQ_EXIT("fopen", NULL, (fp = fopen(conf_path, "r")), "apertura file configurazione server\n", "");
-
+	//leggo tutto il file
 	while(fgets(buffer, BUFSIZE, fp) != NULL) {
-		if(buffer[0] == '#' || buffer[0] == '\n') continue; //ignoro le line che iniziano con # o vuote
-
+		//ignoro le line che iniziano con # o vuote
+		if(buffer[0] == '#' || buffer[0] == '\n') continue; 
+		//formato conosciuto a priori, se e' sbagliato comunico l'errore ed esco
 		token = strtok_r(buffer, "\"", &saveptr);
 		token = strtok_r(NULL, "\"", &saveptr);
 		if(token == NULL) {
 			fprintf(stderr, "formato file config errato\n");
 			exit(EXIT_FAILURE);
 		}
-
+		//mi salvo ogni valore in un array di stringhe
+		CHECK_EQ_EXIT("malloc", NULL, (bufptr[i] = malloc(BUFSIZE * sizeof(char))), "bufptr configurazione server\n", "");
 		n = strlen(token);
-		CHECK_EQ_EXIT("malloc", NULL, (bufptr[i] = malloc(n * sizeof(char))), "bufptr configurazione server\n", "");
-		strncpy(bufptr[i], token, n);
+		strncpy(bufptr[i], token, BUFSIZE);
+		bufptr[i][n] = '\0';
 
 		if(++i == NUM_CONF_VALS + 1) {
 			fprintf(stderr, "formato config errato: troppi argomenti\n");
@@ -63,16 +66,16 @@ config_t * read_config(char * conf_path) {
 
 	//creo in ordine la struct config
 	//SOCKET NAME (i=0)
-	n = strlen(bufptr[0]) + 1;
-	CHECK_EQ_EXIT("malloc", NULL, (conf->sock_name = malloc(n * sizeof(char))), 
+	n = strlen(bufptr[0]);
+	CHECK_EQ_EXIT("malloc", NULL, (conf->sock_name = malloc(BUFSIZE * sizeof(char))), 
 		"sockname configurazione server\n", "");
-	strncpy(conf->sock_name, bufptr[0], n);
+	strncpy(conf->sock_name, bufptr[0], BUFSIZE);
 	conf->sock_name[n] = '\0';
 	//LOG NAME (i=1)
-	n = strlen(bufptr[1]) + 1;
-	CHECK_EQ_EXIT("malloc", NULL, (conf->log_name = malloc(n * sizeof(char))), 
+	n = strlen(bufptr[1]);
+	CHECK_EQ_EXIT("malloc", NULL, (conf->log_name = malloc(BUFSIZE * sizeof(char))), 
 		"logname configurazione server\n", "");
-	strncpy(conf->log_name, bufptr[1], n);
+	strncpy(conf->log_name, bufptr[1], BUFSIZE);
 	conf->log_name[n] = '\0';
 	//NUM WORKERS (i=2)
 	conf->num_workers = strtol(bufptr[2], NULL, 10);
@@ -100,5 +103,14 @@ void print_config(config_t * conf) {
 			"numero massimo file in memoria: %ld\nmemoria server: %ld bytes\n\n"
 			"***FINE CONFIGURAZIONE SERVER***\n", conf->sock_name, conf->log_name,
 			conf->num_workers, conf->mem_files, conf->mem_bytes);
+	}
+}
+
+//libera la memoria allocata per la struct config
+void free_config(config_t * conf) {
+	if(conf != NULL) {
+		free(conf->sock_name);
+		free(conf->log_name);
+		free(conf);
 	}
 }

@@ -11,16 +11,22 @@ extern long MAX_CAP;
 extern long CUR_CAP;
 extern long MAX_FIL;
 extern long CUR_FIL;
-
 extern long max_saved_files;
 extern long max_reached_memory;
 extern long num_capacity_miss;
 
+extern pthread_mutex_t storemtx;
+
 extern queue_t * replace_queue;
 
-extern int clients;
 extern volatile int termina;
 extern volatile int hangup;
+extern volatile int clients;
+
+extern icl_hash_t * table;
+extern int req_pipe;
+
+extern int quiet;
 
 //usata all'avvio del server per salvare i valori di configurazione
 typedef struct {
@@ -51,11 +57,19 @@ typedef struct {
     void*           contenuto;
     char*           file_name;
     size_t          file_size;
+    int             open_flag;
     int             lock_flag;
-    pid_t           locked_by;
-    pthread_mutex_t lock;
-    pthread_cond_t  cond;
+    int             locked_by;
+    pthread_cond_t  cond; //per il momento provo a tenerla
 } file_t;
+
+static inline void freeFile(void * f){
+    if(((file_t*)f)->contenuto) 
+        free(((file_t*)f)->contenuto);
+    free(((file_t*)f)->file_name);
+    pthread_cond_destroy(&(((file_t*)f)->cond));
+    free(f);
+}
 
 //enumerazioni usate per maggiore legibilita' del codice
 //nello scambio di informazioni tra client e server
@@ -81,6 +95,7 @@ typedef struct node {
 void cleanuplist_ins(int id, char * data);
 int cleanuplist_del(char * data);
 char * cleanuplist_getakey(int id);
+void cleanuplist_free(void);
 int cleanlist_isEmpty(void);
 
 #endif /* MY_DATA_H */

@@ -69,6 +69,14 @@ char * cleanuplist_getakey(int id) {
    return NULL;
 }
 
+void cleanuplist_free(void) {
+   while(head != NULL) {
+      struct node *tmp = head;
+      tmp = head;
+      head = head->next;
+      free(tmp);
+   }
+}
 
 int cleanuplist_isEmpty() {
    return head == NULL;
