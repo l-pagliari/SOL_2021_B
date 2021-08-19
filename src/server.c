@@ -35,6 +35,8 @@ long max_saved_files = 0;
 long max_reached_memory = 0;
 long num_capacity_miss = 0;
 
+int clients = 0;
+
 //char timestr[11]; usata per il timestamp nel file di log
 
 //usata per passare gli argomenti al signal handler
@@ -59,20 +61,19 @@ static void *sigHandler(void *arg) {
 			case SIGINT:
 			case SIGTERM:
 			case SIGQUIT:
-			case SIGHUP:
 				//printf("ricevuto segnale %s, esco\n", (sig==SIGINT) ? "SIGINT": ((sig==SIGTERM)?"SIGTERM":"SIGQUIT") );
-	   			//close(fd_pipe);
 				if(writen(fd_pipe,&sig,sizeof(int))==-1){ 
                     perror("write signal handler");
                     return NULL;
                 }
-                //chiudo la pipe di comunicazione con thread dispatcher
 	            close(fd_pipe);  
 	            return NULL;
-			//case SIGHUP:
-			//	printf("ricevuto segnale SIGHUP\n");
-			//	hangup = 1;
-			//	break;
+			case SIGHUP:
+				if(writen(fd_pipe,&sig,sizeof(int))==-1){ 
+                    perror("write signal handler");
+                    return NULL;
+                }
+                return NULL;
 			default:  ; 
 		}
     }
@@ -189,6 +190,12 @@ int main(int argc, char* argv[]) {
     oldmax = fdmax;
 
     while(!termina) {		
+
+    	//printf("TEST: sto per fare la select, cliens connessi: %d\n", clients);
+ 
+
+
+
 		tmpset = set;
 		if (select(fdmax+1, &tmpset, NULL, NULL, NULL) == -1) {
 			perror("select");
@@ -228,10 +235,12 @@ int main(int argc, char* argv[]) {
 		  			}
 					
 					if(hangup){
-						printf("SERVER SHUTTING DOWN... impossibile eseguire nuove richieste\n"); //DA TESTARE
+						printf("SERVER SHUTTING DOWN... unable to accept new connections\n"); //DA TESTARE
 					 	close(connfd);
 					 	continue;
 					}
+
+					clients++;
 
 		  			FD_SET(connfd, &set);  
 		  			if(connfd > fdmax) {
@@ -263,13 +272,12 @@ int main(int argc, char* argv[]) {
                         exit(EXIT_FAILURE);
                     }
                     if(sig==SIGHUP) {
-                    	//printf("[SERVER] Ricevuto SIGHUP (DA IMPLEMENTARE)\n");
-                    	hangup = 1; 
-                    }else {
+                    	printf("[SERVER] Ricevuto SIGHUP (DA IMPLEMENTARE)\n");
+                    	hangup = 1;
+          			}else {
                    	 	//printf("[SERVER] ricevuto segnale %s, esco\n", (sig==SIGINT) ? "SIGINT": ((sig==SIGTERM)?"SIGTERM":"SIGQUIT") );
 						termina = 1;
 					}
-					close(signal_pipe[0]);
 		    		break;
 				}
 				// nuova connessione
@@ -297,7 +305,7 @@ int main(int argc, char* argv[]) {
 		  		else 
 					fprintf(stderr, "SERVER TOO BUSY\n");
 		    }
-		    continue;
+			continue;
 		}//end for
 	}//end while
     /* FINE BLOCCO SELECT */

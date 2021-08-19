@@ -17,6 +17,10 @@ long num_capacity_miss;
 
 queue_t * replace_queue;
 
+volatile int termina;
+volatile int hangup;
+int clients;
+
 void rimpiazzamento_fifo(long fd, icl_hash_t *table);
 
 void handler_openfile(long fd, icl_hash_t * table, void * key, int flag, pid_t id) {
@@ -533,9 +537,15 @@ void workerF(void *arg) {
 			while((keyptr = cleanuplist_getakey(req->cid)) != NULL) {
 				unlock_atexit(htab, keyptr);
 			}
-
+			clients--;
     		close(connfd);
     		fprintf(stdout, "%s[LOG] Closed connection (client %d)\n", tStamp(timestr), (int)req->cid);
+
+    		if(hangup == 1 && clients == 0) {
+    			printf("HANGUP: tutti i task sono terminati, chiudo\n");
+    			termina = 1;
+    			close(req_pipe);
+    		}
 			break;
 
 		case OPEN_FILE:

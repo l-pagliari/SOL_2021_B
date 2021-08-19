@@ -18,6 +18,10 @@ extern long num_capacity_miss;
 
 extern queue_t * replace_queue;
 
+extern int clients;
+extern volatile int termina;
+extern volatile int hangup;
+
 //usata all'avvio del server per salvare i valori di configurazione
 typedef struct {
 	char*	sock_name;
