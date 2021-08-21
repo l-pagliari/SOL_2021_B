@@ -48,10 +48,6 @@ pthread_mutex_t storemtx = PTHREAD_MUTEX_INITIALIZER;
 //usata per il timestamp nel file di log
 char timestr[11];
 
-/* AGGIUNGERE QUI LA VARIABILE GLOBALE INDIRIZZO FILE LOG UTILIZZATA DAL WORKER */
-/* SECONDO LO STESSO PRINCIPIO ANCHE IL POINTER ALLA HASH TABLE */
-/* PRINCIPIO = PASSO SOLO QUELLO CHE PUO' CAMBIARE / NON SONO ANCORA CONVINTO */
-
 //usata per passare gli argomenti al signal handler
 typedef struct {
     sigset_t     *set;           

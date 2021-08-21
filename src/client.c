@@ -35,27 +35,22 @@ int main(int argc, char *argv[]) {
     }
 	int r;
     int connection_established = 0;
-
-    char opt;
+	char opt;
     char *sockname = NULL;
     char *token, *save, *token2;
-    
     size_t fsize;
     void *memptr = NULL;
-	//usati da strtol in R
-    char *endptr;
+	char *endptr;
     long val;
-    
-    char *append_buf;
-    size_t append_len;
-
-
-	char *read_dir = NULL;
+    char *read_dir = NULL;
     char *write_dir = NULL;
     char rdpath[PATH_MAX];
     char wrpath[PATH_MAX];	
-
-    while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:pa:")) != -1) {
+    
+    //char *append_buf;
+    //size_t append_len;
+    
+	while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:pa:")) != -1) {
     	switch(opt) {
 			
 			case 'h': 
@@ -192,21 +187,6 @@ int main(int argc, char *argv[]) {
                	}
 				break;
 
-			
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 			case 'R':
 				if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita\n");
@@ -223,37 +203,12 @@ int main(int argc, char *argv[]) {
                		fprintf(stderr, "input errato, usare -h per aiuto\n");
                		exit(EXIT_FAILURE);
            		}
-				//read_dir != NULL indica che vogliamo memorizzare i file letti
-				//il cast per l'uso realistico non dovrebbe causare problemi, in caso si puo' usare atoi con un altro errchecking
+				//il cast non dovrebbe causare problemi, in caso si puo' usare atoi con un altro controllo errori
 				r = readNFiles((int)val, read_dir);
-				if(!quiet && r > 0) {
+				/*if(!quiet && r > 0) {
 					if(read_dir == NULL) printf("[CLIENT] Letti %d file diversi dal server\n", r);
 					else printf("[CLIENT] Letti %d file diversi dal server e salvati nella directory %s\n", r, read_dir);
-				}
-				break;
-
-			
-
-
-
-
-
-
-
-
-
-			
-			case 'u':
-				if(connection_established == 0) {
-					fprintf(stderr, "connesione non stabilita\n");
-					exit(EXIT_FAILURE);
-				}
-				token = strtok_r(optarg, ",", &save);
-				do{
-					r = unlockFile(token);
-					if(!quiet && r==0) printf("[CLIENT] Lockato il file %s\n", token);
-					token = strtok_r(NULL, ",", &save);
-				}while(token!=NULL);
+				}*/
 				break;
 
 			case 'l':
@@ -264,6 +219,21 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					r = lockFile(token);
+					if(r == -1) printf("[CLIENT] Errore lock\n");
+					if(!quiet && r==0) printf("[CLIENT] Lockato il file %s\n", token);
+					token = strtok_r(NULL, ",", &save);
+				}while(token!=NULL);
+				break;
+			
+			case 'u':
+				if(connection_established == 0) {
+					fprintf(stderr, "connesione non stabilita\n");
+					exit(EXIT_FAILURE);
+				}
+				token = strtok_r(optarg, ",", &save);
+				do{
+					r = unlockFile(token);
+					if(r == -1) printf("[CLIENT] Errore unlock\n");
 					if(!quiet && r==0) printf("[CLIENT] Unlockato il file %s\n", token);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
@@ -277,6 +247,7 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					r = removeFile(token);
+					if(r == -1) printf("[CLIENT] Errore remove\n");
 					if(!quiet && r==0) printf("[CLIENT] Eliminato il file %s\n", token);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
@@ -298,8 +269,7 @@ int main(int argc, char *argv[]) {
            		if(!quiet) printf("[CLIENT] Abilitato il ritardo tra le richieste di %ldmsec\n", val);
     			break;
 
-    		//principalmente per il testing di append
-    		//imput della forma -a filename,stringa
+    		/*
     		case 'a':
     			if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita\n");
@@ -324,8 +294,7 @@ int main(int argc, char *argv[]) {
 					r = appendToFile(token, append_buf, append_len, write_dir);
 					if(r == -1) fprintf(stderr, "errore append\n");
 				}
-				break;
-
+				break; */
 
 			//getopt error handling manuale per gestire gli argomenti opzionali
 			case '?': 

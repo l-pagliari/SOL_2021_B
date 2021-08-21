@@ -314,10 +314,6 @@ int readFile(const char* pathname, void** buf, size_t* size) {
 			return -1;
 		}
 		SYSCALL_RETURN("read", ret, readn(connfd, buf2, *size), "ricevendo dati dal server", "");
-		//STAMPA A FINI DI TEST
-		/*printf("FILE RICHIESTO (%s) (dim: %dbytes):\n"
-				"----------------------------------------\n%s"
-				"----------------------------------------\n", pathname, (int) *size, (char*)buf2);*/
 		(*buf) = buf2;
 	}
 	free(rts);
@@ -335,35 +331,25 @@ int readNFiles(int N, const char* dirname) {
 	//PARTE READ N
 	int end, count = 0;
 	size_t fsize, namelen;
-	char *fname = NULL;
+	char fname[PATH_MAX];
 	char *buf = NULL;
 
 	//per qualche ragione le realloc non funzionano se non faccio prima una malloc
 	//fixare in seguito se rimane tempo
-	fname = malloc(64);
-		if(fname == NULL) {
-			perror("malloc");
-			return -1;
-		}
 	buf = malloc(64);
 		if(buf == NULL) {
 			perror("malloc");
 			return -1;
 		}
 	char synch = 's';
-
 	//non so a priori quanti file sono presenti sul server, devo essere notificato
 	SYSCALL_RETURN("read", ret, readn(connfd, &end, sizeof(int)), "ricevendo dati dal server", ""); 
+
 	while(!end){
 		//leggo il nome del file
 		SYSCALL_RETURN("read", ret, readn(connfd, &namelen, sizeof(size_t)), "ricevendo dati dal server", "");
-		if(realloc(fname, namelen+1) == NULL){
-			perror("realloc");
-			return -1;
-		}
 		SYSCALL_RETURN("read", ret, readn(connfd, fname, namelen), "ricevendo dati dal server", "");
 		fname[namelen] = '\0'; //per la stampa del nome, in caso del salvataggio 
-
 		//leggo il contenuto del file
 		SYSCALL_RETURN("read", ret, readn(connfd, &fsize, sizeof(size_t)), "ricevendo dati dal server", "");
 		if(realloc(buf, fsize) == NULL) {
@@ -372,6 +358,7 @@ int readNFiles(int N, const char* dirname) {
 		}
 		SYSCALL_RETURN("read", ret, readn(connfd, buf, fsize), "ricevendo dati dal server", ""); 
 
+		if(!quiet) printf("[CLIENT] Letto il file %s (%ld Bytes)\n", fname, fsize);
 		//se specificato devo salvare il file
 		if(dirname != NULL) saveFile(dirname, fname, buf, fsize);
 
@@ -381,9 +368,10 @@ int readNFiles(int N, const char* dirname) {
 		SYSCALL_RETURN("read", ret, readn(connfd, &end, sizeof(int)), "ricevendo dati dal server", "");
 		count++;
 	}
-	if(count == 0) printf("Nessun file presente sul server\n");
+	if(end == -1) fprintf(stderr, "[CLIENT] Errore nella lettura files\n");
+	else if(count == 0 && !quiet) printf("[CLIENT] Nessun file presente sul server\n");
+
 	if(buf) free(buf);
-	if(fname) free(fname);
 	free(rts);
 	if(delay) msleep(ms_delay);
 	return count;
@@ -482,8 +470,7 @@ int setDelay(long msec) {
     return 0;
 }
 
-//richiesta di scrivere in append al file pathname i size byte contenuti dal buffer
-//l'operazione e' garantita atomica dal server
+/*
 int appendToFile(const char* pathname, void* buf, size_t size, const char* dirname) {
 
 	int ret, retval;
@@ -501,4 +488,4 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
 	return retval;
-}
+}*/
