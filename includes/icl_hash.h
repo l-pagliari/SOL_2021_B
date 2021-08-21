@@ -7,14 +7,16 @@
 /* $Id$ */
 /* $UTK_Copyright: $ */
 
+/* modifiche: 
+    -aggiunta la mutex nella struct icl_hash_t 
+    -aggiunta la funzione get_n_entries   
+*/
+
 #ifndef icl_hash_h
 #define icl_hash_h
 
 #include <stdio.h>
-
-#if defined(c_plusplus) || defined(__cplusplus)
-extern "C" {
-#endif
+#include <pthread.h>
 
 typedef struct icl_entry_s {
     void* key;
@@ -28,6 +30,7 @@ typedef struct icl_hash_s {
     icl_entry_t **buckets;
     unsigned int (*hash_function)(void*);
     int (*hash_key_compare)(void*, void*);
+    pthread_mutex_t lock;
 } icl_hash_t;
 
 icl_hash_t *
@@ -54,11 +57,8 @@ hash_pjw(void* key);
 int 
 string_compare(void* a, void* b);
 
-int hash_dump_n(FILE* stream, icl_hash_t* ht, int n);
-
-
-/* funzione aggiunta per gestire la funzionalita' read_n_files */
-
+/* riempie l'array con n entry "casuali" */
+/* casualita' non ancora implementata */
 int get_n_entries( icl_hash_t *ht, int n, void ** data_arr);
 
 

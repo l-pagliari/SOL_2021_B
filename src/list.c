@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 #include <util.h>
 #include <mydata.h>
@@ -9,6 +10,7 @@
 
 struct node *head = NULL;
 //forse serve una mutex per quando modifico la head
+pthread_mutex_t clist_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 void cleanuplist_ins(int id, char * data) {
    listnode_t * new = malloc(sizeof(listnode_t));
@@ -17,10 +19,12 @@ void cleanuplist_ins(int id, char * data) {
       exit(EXIT_FAILURE);
    }
 	new->id = id;
-   strncpy(new->ht_key, data, strlen(data));
-
+   strncpy(new->ht_key, data, PATH_MAX);
+   
+   LOCK(&clist_mtx);
    new->next = head;
    head = new;
+   UNLOCK(&clist_mtx);
 }
 
 //puo' esistere una sola entry per key
@@ -32,12 +36,15 @@ int cleanuplist_del(char *data) {
    listnode_t * temp;
    //caso in cui il nodo da eliminare e' il primo
    if(strcmp(data, head->ht_key) == 0) {
+      LOCK(&clist_mtx);
       temp = head;
       head = head->next;
+      UNLOCK(&clist_mtx);
       free(temp);
       return 0;
    }
    else {
+      LOCK(&clist_mtx);
       prev = head;
       curr = head->next;
       //scorro la lista 
@@ -50,8 +57,10 @@ int cleanuplist_del(char *data) {
          temp = curr;
          prev->next = curr->next;
          free(temp);
+         UNLOCK(&clist_mtx);
          return 0;
       }
+      UNLOCK(&clist_mtx);
    }
    return -1;
 }
@@ -69,6 +78,17 @@ char * cleanuplist_getakey(int id) {
    return NULL;
 }
 
+void cleanuplist_free(void) {
+   LOCK(&clist_mtx);
+   while(head != NULL) {
+      struct node *tmp = head;
+      tmp = head;
+      head = head->next;
+      free(tmp);
+   }
+   UNLOCK(&clist_mtx);
+   pthread_mutex_destroy(&clist_mtx);
+}
 
 int cleanuplist_isEmpty() {
    return head == NULL;

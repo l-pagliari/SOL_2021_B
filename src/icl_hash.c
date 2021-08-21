@@ -11,6 +11,12 @@
 /* $Id: icl_hash.c 2838 2011-11-22 04:25:02Z mfaverge $ */
 /* $UTK_Copyright: $ */
 
+/* modifiche: 
+    -aggiunta la mutex nella struct icl_hash_t 
+    -aggiunta la funzione get_n_entries   
+    -modificata la funzione dump con il formato di stampa
+*/
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,8 +25,6 @@
 
 #include <icl_hash.h>
 #include <mydata.h>
-
-
 
 #define BITS_IN_int     ( sizeof(int) * CHAR_BIT )
 #define THREE_QUARTERS  ((int) ((BITS_IN_int * 3) / 4))
@@ -90,6 +94,8 @@ icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_
 
     ht->hash_function = hash_function ? hash_function : hash_pjw;
     ht->hash_key_compare = hash_key_compare ? hash_key_compare : string_compare;
+
+    pthread_mutex_init(&ht->lock, NULL);
 
     return ht;
 }
@@ -278,6 +284,7 @@ int icl_hash_destroy(icl_hash_t *ht, void (*free_key)(void*), void (*free_data)(
     }
 
     if(ht->buckets) free(ht->buckets);
+    pthread_mutex_destroy(&(ht->lock));
     if(ht) free(ht);
 
     return 0;
@@ -325,38 +332,10 @@ int icl_hash_dump(FILE* stream, icl_hash_t* ht)
         bucket = ht->buckets[i];
         for(curr=bucket; curr!=NULL; ) {
             if(curr->key) {
-                fprintf(stream, "%s\t[%ld bytes]\n", (char*)curr->key, ((file_t*)curr->data)->file_size);
+                fprintf(stream, "|| %s\t[%ld bytes] ||\n", (char*)curr->key, ((file_t*)curr->data)->file_size);
             }
             curr=curr->next;
         }
     }
     return 0;
 }
-
-/*
-int hash_dump_n(FILE* stream, icl_hash_t* ht, int n)
-{
-    icl_entry_t *bucket, *curr;
-    int i;
-
-    if(!ht) return -1;
-
-    for(i=0; i<ht->nbuckets; i++) {
-        bucket = ht->buckets[i];
-        for(curr=bucket; curr!=NULL; ) {
-            if(curr->key) {
-                if((((file_t*)curr->data)->contenuto) != NULL) 
-                    fprintf(stream, "FILE %s:\n%s", (char *)curr->key, (char*)((file_t*)curr->data)->contenuto);
-                else
-                    fprintf(stream, "FILE %s: FILE VUOTO\n", (char *)curr->key);
-                fprintf(stream, "------------------------------------------------------\n");
-                if(n == 1) return 0;
-                if(n > 1) n--;
-            }
-            curr=curr->next;
-        }
-    }
-    return 0;
-}
-
-*/

@@ -81,7 +81,7 @@ static int freePoolResources(threadpool_t *pool) {
 
 threadpool_t *createThreadPool(int numthreads, int pending_size) {
     if(numthreads <= 0 || pending_size < 0) {
-	errno = EINVAL;
+	   errno = EINVAL;
         return NULL;
     }
     
