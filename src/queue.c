@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
+#include <pthread.h>
 
 #include <queue.h>
 #include <util.h>
@@ -11,9 +11,8 @@ queue_t* init_queue(){
 
 	queue_t * q;
 	q = (queue_t*)malloc(sizeof(queue_t));
-	if(q == NULL) {
+	if(q == NULL) 
 		return NULL;
-	}
 	q->head = NULL;
 	q->tail = NULL;
 	pthread_mutex_init(&q->qlock, NULL);
@@ -28,7 +27,7 @@ char* q_put(queue_t *q, char *key) {
 		perror("malloc");
 		return NULL;
 	}
-	strncpy(new->tkey, key, strlen(key));
+	strncpy(new->tkey, key, PATH_MAX);
 	new->next = NULL;
 
 	LOCK(&q->qlock);
@@ -38,9 +37,7 @@ char* q_put(queue_t *q, char *key) {
 		q->tail->next = new;
 	q->tail = new;
 	UNLOCK(&q->qlock);
-
 	//printf("TEST: ho inserito nella coda: %s\n", new->tkey);
-
 	return new->tkey;
 }
 
@@ -48,12 +45,6 @@ void q_pull(queue_t *q, char *key) {
 
 	node_t *tmp;
 	tmp = q->head;
-
-	/*str = malloc(strlen(tmp->tkey));
-	if(str == NULL) {
-		perror("malloc");
-		return NULL;
-	}*/
 	strncpy(key, tmp->tkey, PATH_MAX);
 
 	LOCK(&q->qlock);
@@ -63,7 +54,6 @@ void q_pull(queue_t *q, char *key) {
 	UNLOCK(&q->qlock);
 
 	free(tmp);
-	
 }
 
 //scorre la coda ed elimina il nodo richiesto se lo trova

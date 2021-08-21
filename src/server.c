@@ -199,15 +199,15 @@ int main(int argc, char* argv[]) {
 	char buf[BUFSIZE];
 	int n;
 	fd_set set, tmpset;
-    FD_ZERO(&set);
-    FD_ZERO(&tmpset);
+   FD_ZERO(&set);
+   FD_ZERO(&tmpset);
 	FD_SET(listenfd, &set);        
-    FD_SET(signal_pipe[0], &set); 
-    FD_SET(request_pipe[0], &set); 
+   FD_SET(signal_pipe[0], &set); 
+   FD_SET(request_pipe[0], &set); 
     
   	int fdmax, oldmax;
-    fdmax = (listenfd > signal_pipe[0]) ? listenfd : signal_pipe[0];
-    fdmax = (fdmax > request_pipe[0]) ? fdmax : request_pipe[0];
+   fdmax = (listenfd > signal_pipe[0]) ? listenfd : signal_pipe[0];
+   fdmax = (fdmax > request_pipe[0]) ? fdmax : request_pipe[0];
 	oldmax = fdmax;
 	while(!termina) {		
 		tmpset = set;
@@ -313,11 +313,14 @@ int main(int argc, char* argv[]) {
     /* FINE BLOCCO SELECT */
 
     /* BLOCCO STAMPA CHIUSURA SERVER E CLEANUP */
-	printf("[SERVER CLOSING] max files saved: %ld / %ld\n"
-			"[SERVER CLOSING] max bytes occupied: %ld / %ld\n"
-			"[SERVER CLOSING] number of files replaced: %ld\n"
-			"[SERVER CLOSING] list of files currently in storage:\n",
-			max_saved_files, MAX_FIL, max_reached_memory, MAX_CAP, num_capacity_miss);
+	printf("\n[SERVER CLOSING] max files saved:\t%ld\n"
+				"[SERVER CLOSING] max bytes occupied:\t%ld\n"
+				"[SERVER CLOSING] capacity misses:\t%ld\n"
+			   "[SERVER CLOSING] files in storage:\t%ld / %ld\n"
+				"[SERVER CLOSING] storage capacity:\t%ld / %ld\n"
+				"[SERVER CLOSING] list of files currently in storage:\n",
+			max_saved_files, max_reached_memory, num_capacity_miss, 
+			CUR_FIL ,MAX_FIL, CUR_CAP, MAX_CAP);
 	icl_hash_dump(stdout, table);
 	
 	destroyThreadPool(pool, 0); 

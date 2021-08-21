@@ -61,18 +61,18 @@ request_t * initRequest(int t, const char * fname, int n){
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
 
 	struct sockaddr_un serv_addr;
-    int sockfd;
-    SYSCALL_RETURN("socket", sockfd, socket(AF_UNIX, SOCK_STREAM, 0), "socket", "");
-    memset(&serv_addr, '0', sizeof(serv_addr));
+   int sockfd;
+   SYSCALL_RETURN("socket", sockfd, socket(AF_UNIX, SOCK_STREAM, 0), "socket", "");
+   memset(&serv_addr, '0', sizeof(serv_addr));
 	serv_addr.sun_family = AF_UNIX;    
-    strncpy(serv_addr.sun_path,sockname, strlen(sockname)+1);
+   strncpy(serv_addr.sun_path,sockname, strlen(sockname)+1);
 
-    int maxtime = 0;
-    struct timespec sleeptime;
-    sleeptime.tv_sec = msec / 1000;
-    sleeptime.tv_nsec = msec * 1000000;
-    //tento a riconnettermi se la connect fallisce
-    while(connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) != 0) {
+   int maxtime = 0;
+   struct timespec sleeptime;
+   sleeptime.tv_sec = msec / 1000;
+   sleeptime.tv_nsec = msec * 1000000;
+   //tento a riconnettermi se la connect fallisce
+  	while(connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) != 0) {
     	nanosleep(&sleeptime, NULL);
     	maxtime = maxtime + msec;
     	printf("tento nuovamente a connettermi...\n");
@@ -80,21 +80,20 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     		errno = ETIMEDOUT;
     		return -1;
 		}
-    }
-    //mi sono connesso al socket, mando al server il nome del client
-    int ret;
-    request_t * rts;
-    rts = initRequest(OPEN_CONNECTION, NULL, 0);
-    if(rts == NULL) return -1;
-    SYSCALL_RETURN("write", ret, writen(sockfd, rts, sizeof(request_t)), "inviando dati al server", "");
+   }
+   //mi sono connesso al socket, mando al server il nome del client
+   int ret;
+   request_t * rts;
+   rts = initRequest(OPEN_CONNECTION, NULL, 0);
+   if(rts == NULL) return -1;
+   SYSCALL_RETURN("write", ret, writen(sockfd, rts, sizeof(request_t)), "inviando dati al server", "");
 
 	connfd = sockfd;
-    socket_name = malloc(BUFSIZE*sizeof(char));
-    strncpy(socket_name, sockname, BUFSIZE);
-    if(!quiet) fprintf(stdout, "[CLIENT] Connesso al socket %s\n", socket_name);
-    free(rts);
+   socket_name = malloc(BUFSIZE*sizeof(char));
+   strncpy(socket_name, sockname, BUFSIZE);
+   free(rts);
 
-    if(delay) msleep(ms_delay);;
+   if(delay) msleep(ms_delay);;
 	return 0;
 }
 
@@ -113,7 +112,7 @@ int closeConnection(const char *sockname) {
 
 	connfd = -1;
   	if(socket_name) free(socket_name);
-  	if(!quiet) fprintf(stdout, "[CLIENT] Chiusa la connessione con il socket %s\n", socket_name);
+  	//if(!quiet) fprintf(stdout, "[CLIENT] Chiusa la connessione con il socket %s\n", socket_name);
   	free(rts);
 	return 0;
 }
@@ -195,51 +194,42 @@ int capacityMissHandler(const char *dirname) {
 	
 	int ret, retval = 1;
 	size_t expfsize, namelen;
-	char *fname = NULL;
+	char fname[PATH_MAX];
 	char *buf = NULL;
 	char synch = 's';
 
 	//per qualche ragione le realloc non funzionano se non faccio prima una malloc
 	//fixare in seguito se rimane tempo
-	fname = malloc(64);
-	if(fname == NULL) {
-		perror("malloc");
-		return -1;
-	}
 	buf = malloc(64);
 	if(buf == NULL) {
 		perror("malloc");
 		return -1;
 	}
+	//leggo il nome del file
+	SYSCALL_RETURN("read", ret, readn(connfd, &namelen, sizeof(size_t)), "ricevendo dati dal server", "");
+	SYSCALL_RETURN("read", ret, readn(connfd, fname, namelen), "ricevendo dati dal server", "");
+	fname[namelen] = '\0'; //per la stampa del nome, in caso del salvataggio 
+	//leggo il contenuto del file
+	SYSCALL_RETURN("read", ret, readn(connfd, &expfsize, sizeof(size_t)), "ricevendo dati dal server", "");
+	if(realloc(buf, expfsize) == NULL) {
+		perror("realloc");
+		return -1;
+	}
+	SYSCALL_RETURN("read", ret, readn(connfd, buf, expfsize), "ricevendo dati dal server", ""); 
 
-	//while(retval == 1) {
-		//leggo il nome del file
-		SYSCALL_RETURN("read", ret, readn(connfd, &namelen, sizeof(size_t)), "ricevendo dati dal server", "");
-		if(realloc(fname, namelen+1) == NULL){
-			perror("realloc");
-			return -1;
-		}
-		SYSCALL_RETURN("read", ret, readn(connfd, fname, namelen), "ricevendo dati dal server", "");
-		fname[namelen] = '\0'; //per la stampa del nome, in caso del salvataggio 
+	if(!quiet) fprintf(stdout, "[CLIENT] Ricevuto il file %s (%ld Bytes) a seguito di un capacity miss\n", fname, expfsize);
 
-		//leggo il contenuto del file
-		SYSCALL_RETURN("read", ret, readn(connfd, &expfsize, sizeof(size_t)), "ricevendo dati dal server", "");
-		if(realloc(buf, expfsize) == NULL) {
-			perror("realloc");
-			return -1;
-		}
-		SYSCALL_RETURN("read", ret, readn(connfd, buf, expfsize), "ricevendo dati dal server", ""); 
-
-		//se specificato devo salvare il file
-		if(dirname != NULL) saveFile(dirname, fname, buf, expfsize);
-
-		//comunico la fine della lettura
-		SYSCALL_RETURN("write", ret, write(connfd, &synch, 1), "inviando dati al server", "");
-		//leggo se c'e' un altro file in arrivo
-		SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-	//}
+	//se specificato devo salvare il file
+	if(dirname != NULL) {
+		saveFile(dirname, fname, buf, expfsize);
+		//if(!quiet) fprintf(stdout, "[CLIENT] Salvato il file %s nella directory %s\n", fname, dirname);
+	}
+	//comunico la fine della lettura
+	SYSCALL_RETURN("write", ret, write(connfd, &synch, 1), "inviando dati al server", "");
+	//leggo se c'e' un altro file in arrivo
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+	
 	free(buf);
-	free(fname);
 	return retval;
 }
 
@@ -284,7 +274,10 @@ int writeDirectory(const char *dirname, int max_files, const char *writedir) {
 			else { //ho un effettivo file da mandare al server
 				int r;
 				r = openFile(file->d_name, O_CREATE|O_LOCK);
-				if(r == 0) writeFile(file->d_name, writedir);
+				if(r == 0) r = writeFile(file->d_name, writedir);
+					else printf("Errore nella scrittura del file\n");
+				if(r == 0) r = closeFile(file->d_name);
+					else printf("Errore nella chiusura del file\n");
 				if(max_files == 1) {
 					//printf("[CLIENT] Fine operazione\n");
 				 	return 0;
@@ -429,32 +422,27 @@ int removeFile(const char* pathname) {
 	return retval;
 }
 
+int closeFile(const char* pathname){
+	int ret, retval;
+	request_t * rts;
+	rts = initRequest(CLOSE_FILE, pathname, 0);
+	if(rts == NULL) return -1;
+	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	if(delay) msleep(ms_delay);
+	return retval;
+}
+
 //API aggiuntiva, salva localmente nella cartella dirname un file con il contenuto puntato dal buffer
 int saveFile(const char* dirname, const char* pathname, void* buf, size_t size) {
-	 
-	//provo a creare la directory, se gia' esiste il file controllo che sia una directory
-	struct stat statbuf;
-	int unused, r;
-	r = mkdir(dirname, 0777);
-	if(r == -1 && errno != EEXIST) {
-		perror("mkdir");
-		return -1;
-	}
-	if(r == -1) {
-		SYSCALL_EXIT(stat, unused, stat(dirname, &statbuf), "facendo la stat di %s\n", dirname);
-		if(!S_ISDIR(statbuf.st_mode)) {
-			fprintf(stderr, "%s non e' una directory\n", dirname);
-			return -1;
-		}
-	}
-	//ricavo il nome da salvare da pathname(formato sconosciuto a priori)
+	 //ricavo il nome da salvare da pathname, formato sconosciuto a priori
 	char *filepath;
 	size_t len;
 	if(strchr(pathname, '/') != NULL) {
 		char *tmp_str = strdup(pathname);
 		char *bname = basename(tmp_str);
 		len = strlen(dirname)+strlen(bname)+2; //carattere '/' e terminatore
-		filepath = malloc(len);
+		filepath = malloc(len*sizeof(char));
 		if(filepath == NULL){
 			perror("malloc");
 			return -1;
@@ -477,11 +465,11 @@ int saveFile(const char* dirname, const char* pathname, void* buf, size_t size) 
 		perror("fopen");
 		return -1;
 	}
-	if(fwrite(buf, 1, size, fp) != size ) {
+	if(fwrite(buf, sizeof(char), size, fp) != size ) {
 		perror("fwrite");
 		return -1;
 	}
-	//printf("[CLIENT] Saved file %s\n", filepath);
+	if(!quiet) fprintf(stdout, "[CLIENT] Salvato %s\n", filepath);
 	free(filepath);
 	fclose(fp);
 	if(delay) msleep(ms_delay);

@@ -23,6 +23,8 @@ int unlockFile(const char* pathname);
 
 int lockFile(const char* pathname);
 
+int closeFile(const char* pathname);
+
 int removeFile(const char* pathname);
 
 int saveFile(const char* dirname, const char* pathname, void* buf, size_t size);

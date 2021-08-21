@@ -35,22 +35,25 @@ int main(int argc, char *argv[]) {
     }
 	int r;
     int connection_established = 0;
-    int saveread = 0;
-    int savewrite = 0;
+
     char opt;
     char *sockname = NULL;
     char *token, *save, *token2;
-    char *read_dir = NULL;
-    char *write_dir = NULL;
+    
     size_t fsize;
     void *memptr = NULL;
 	//usati da strtol in R
     char *endptr;
     long val;
-    char rdirpath[PATH_MAX];
-    char wdirpath[PATH_MAX];	
+    
     char *append_buf;
     size_t append_len;
+
+
+	char *read_dir = NULL;
+    char *write_dir = NULL;
+    char rdpath[PATH_MAX];
+    char wrpath[PATH_MAX];	
 
     while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:pa:")) != -1) {
     	switch(opt) {
@@ -87,7 +90,7 @@ int main(int argc, char *argv[]) {
 					perror("openConnection");
 					exit(EXIT_FAILURE);
 				}
-				if(!quiet) printf("[CLIENT] Connesso al socket %s\n", sockname);
+				if(!quiet) printf("[CLIENT] Aperta connessione con il server \n");
 				connection_established = 1;
 				break;
 			
@@ -102,10 +105,62 @@ int main(int argc, char *argv[]) {
 					if(r == 0) {
 						r = writeFile(token, write_dir);
 						if(r == -1) printf("[CLIENT] Errore nella scrittura del file\n");
-						else if(!quiet) printf("[CLIENT] Scritto il file %s sul server\n", token);
+						//else if(!quiet) printf("[CLIENT] Scritto il file %s sul server\n", token);
+						r = closeFile(token);
+						if(r == -1) printf("[CLIENT] Errore nella chiusura del file\n");
 					}
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
+				break;
+
+			case 'r':
+				if(connection_established == 0) {
+					fprintf(stderr, "connesione non stabilita, usare -h per aiuto\n");
+					exit(EXIT_FAILURE);
+				}
+				token = strtok_r(optarg, ",", &save);
+				do{
+					r = openFile(token, 0);
+					if(r == 0)
+						r = readFile(token, &memptr, &fsize);
+					if(r == 0) {
+						if(!quiet) printf("[CLIENT] Letto il file %s (%ld Bytes)\n", token, fsize);
+						if(read_dir) r = saveFile(read_dir, token, memptr, fsize);
+						/*if(r == 0) {
+							if(!quiet) printf("[CLIENT] Salvato il file %s nella directory %s\n", token, read_dir);
+						}*/
+						r = closeFile(token);
+						if(r == -1) printf("[CLIENT] Errore nella chiusura del file\n");
+					}
+					if(memptr) free(memptr);
+					token = strtok_r(NULL, ",", &save);
+				}while(token!=NULL);	
+				break;
+
+			//directory dove salvare localmente i file letti dal server
+			case 'd':
+				/*salvo in rdpath il path assoluto della directory passata in input
+				  se non esiste la creo */
+				r = makeDir(optarg, rdpath);
+				if(r == -1) {
+					fprintf(stderr, "input errato, usare -h per aiuto\n");
+					exit(EXIT_FAILURE);
+				}
+				read_dir = rdpath;
+				if(!quiet) fprintf(stdout, "[CLIENT] File letti verranno salvati nella cartella %s\n", read_dir);
+				break;
+
+			//directory dove salvare localmente i file espulsi dal server per capacity miss a seguto di una write
+			case 'D':
+				/*salvo in wrpath il path assoluto della directory passata in input
+				  se non esiste la creo */
+				r = makeDir(optarg, wrpath);
+				if(r == -1) {
+					fprintf(stderr, "input errato, usare -h per aiuto\n");
+					exit(EXIT_FAILURE);
+				}
+				write_dir = wrpath;
+				if(!quiet) fprintf(stdout, "[CLIENT] File espulsi verranno salvati nella cartella %s\n", write_dir);
 				break;
 
 			case 'w':
@@ -118,6 +173,7 @@ int main(int argc, char *argv[]) {
 				token2 = strtok_r(NULL, ",", &save);
 				if(token2 == NULL) writeDirectory(token, 0, write_dir);
 				else if(strlen(token2) > 2) {
+					//estraggo il valore numerico usando strtol
 					errno = 0;
 					val = strtol(optarg+2, &endptr, 10);
 					if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
@@ -136,25 +192,20 @@ int main(int argc, char *argv[]) {
                	}
 				break;
 
-			case 'r':
-				if(connection_established == 0) {
-					fprintf(stderr, "connesione non stabilita, usare -h per aiuto\n");
-					exit(EXIT_FAILURE);
-				}
-				token = strtok_r(optarg, ",", &save);
-				do{
-					r = readFile(token, &memptr, &fsize);
-					if(r == 0) {
-						if(!quiet) printf("[CLIENT] Letto il file %s (%ld Bytes)\n", token, fsize);
-						if(saveread) r = saveFile(read_dir, token, memptr, fsize);
-						if(r == 0) {
-							if(!quiet) printf("[CLIENT] Salvato il file %s nella directory %s\n", token, read_dir);
-						}
-					}
-					if(memptr) free(memptr);
-					token = strtok_r(NULL, ",", &save);
-				}while(token!=NULL);	
-				break;
+			
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 			case 'R':
 				if(connection_established == 0) {
@@ -181,52 +232,17 @@ int main(int argc, char *argv[]) {
 				}
 				break;
 
-			//directory dove salvare localmente i file letti dal server
-			case 'd':
-				if(saveread == 0){
-					if((read_dir = malloc(strlen(optarg))) == NULL) {
-						perror("malloc");
-						exit(EXIT_FAILURE);
-					}
-					/*
-					strncpy(read_dir, optarg, strlen(optarg));
-					saveread = 1;
-					*/
-					r = makeDir(optarg, rdirpath);
-					if(r == -1) {
-						fprintf(stderr, "input errato, usare -h per aiuto\n");
-						exit(EXIT_FAILURE);
-					}
-					read_dir = rdirpath;
-					saveread = 1;
+			
 
-				}
-				else {
-					fprintf(stderr, "input errato, usare -h per aiuto\n");
-					exit(EXIT_FAILURE);
-				}
-				break;
 
-			case 'D':
-				if(savewrite == 0){
-					if((write_dir = malloc(PATH_MAX)) == NULL) {
-						perror("malloc");
-						exit(EXIT_FAILURE);
-					}
-					r = makeDir(optarg, wdirpath);
-					if(r == -1) {
-						fprintf(stderr, "input errato, usare -h per aiuto\n");
-						exit(EXIT_FAILURE);
-					}
-					write_dir = wdirpath;
-					savewrite = 1;
-				}
-				else {
-					fprintf(stderr, "input errato, usare -h per aiuto\n");
-					exit(EXIT_FAILURE);
-				}
-				break;
 
+
+
+
+
+
+
+			
 			case 'u':
 				if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita\n");
@@ -338,7 +354,7 @@ int main(int argc, char *argv[]) {
 	if(connection_established == 1) {
    		if(closeConnection(sockname) == -1) //API
    			perror("closeConnection"); 
-   		else if(!quiet) printf("[CLIENT] Chiusa la connesione con il socket %s\n", sockname);
+   		else if(!quiet) printf("[CLIENT] Chiusa la connessione con il server\n");
 						
     }
     if(sockname) free(sockname);
@@ -373,13 +389,11 @@ int makeDir(const char* dirname, char *path){
 	int unused, r;
 	r = mkdir(dirname, 0777);
 	if(r == -1 && errno != EEXIST) {
-		perror("mkdir");
 		return -1;
 	}
 	if(r == -1) {
 		SYSCALL_RETURN(stat, unused, stat(dirname, &statbuf), "facendo la stat di %s\n", dirname);
 		if(!S_ISDIR(statbuf.st_mode)) {
-			fprintf(stderr, "%s non e' una directory\n", dirname);
 			return -1;
 		}
 	}

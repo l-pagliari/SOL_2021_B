@@ -83,7 +83,8 @@ enum {
     REMOVE_FILE         = 6,
     LOCK_FILE           = 7,
     UNLOCK_FILE         = 8,
-    APPEND_FILE         = 9
+    CLOSE_FILE          = 9,
+    APPEND_FILE         = 10
 };
 
 typedef struct node {
@@ -91,6 +92,8 @@ typedef struct node {
    char ht_key[PATH_MAX];
    struct node *next;
 } listnode_t;
+
+pthread_mutex_t clist_mtx;
 
 void cleanuplist_ins(int id, char * data);
 int cleanuplist_del(char * data);
