@@ -18,23 +18,29 @@ TARGETS		= $(BINDIR)server	\
 .SUFFIXES: .c .h 
 
 $(OBJDIR)%.o: $(SRCDIR)%.c
+	@ mkdir -p obj
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -c -o $@ $<
 
 all: $(TARGETS)
 
 $(BINDIR)server: $(OBJDIR)server.o $(OBJDIR)sconfig.o $(OBJDIR)worker.o $(OBJDIR)list.o $(OBJDIR)queue.o $(LIBDIR)libPool.a $(LIBDIR)libHash.a
+	@ mkdir -p bin log tmp
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 $(BINDIR)client: $(OBJDIR)client.o $(LIBDIR)libApi.a
+	@ mkdir -p bin
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 $(LIBDIR)libPool.a: $(OBJDIR)threadpool.o
+	@ mkdir -p lib
 	$(AR) $(ARFLAGS) $@ $<
 
 $(LIBDIR)libHash.a: $(OBJDIR)icl_hash.o 
+	@ mkdir -p lib
 	$(AR) $(ARFLAGS) $@ $<
 
 $(LIBDIR)libApi.a: $(OBJDIR)api.o 
+	@ mkdir -p lib
 	$(AR) $(ARFLAGS) $@ $<	
 
 $(OBJDIR)server.o: $(SRCDIR)server.c
