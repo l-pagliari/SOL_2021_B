@@ -31,8 +31,8 @@ int quiet;
 /* inizializzo la richiesta da mandare al server sottoforma di una struct, uguale
    per ogni richiesta */
 request_t * initRequest(int t, const char * fname, int n){
-	request_t * req;
-	if((req = (request_t*)malloc(sizeof(request_t))) == NULL) {
+	request_t * req = NULL;
+	if((req = malloc(sizeof(request_t))) == NULL) {
 		perror("malloc");
 		return NULL;
 	}
@@ -51,8 +51,8 @@ request_t * initRequest(int t, const char * fname, int n){
 			errno = EINVAL;
 			return NULL;
 		}
-		strncpy(req->filepath, abs_path, PATH_MAX+1);
-	}
+		strncpy(req->filepath, abs_path, PATH_MAX);
+	} else memset(req->filepath, '\0', PATH_MAX); //valgrind
 	return req;
 }
 
@@ -168,6 +168,7 @@ int writeFile(const char *pathname, const char *dirname) {
 	SYSCALL_RETURN("write", ret, writen(connfd, &fsize, sizeof(size_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("write", ret, writen(connfd, buffer, fsize), "inviando dati al server", "");
 	//il server mi comunica se c'e' abbastanza spazio in memoria
+	retval = 0;
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
 	//1.retval == 0: c'e' spazio
 	//2.retval == 1: il server deve espellere uno o piu' file per fare spazio al nuovo
@@ -178,11 +179,12 @@ int writeFile(const char *pathname, const char *dirname) {
 		return -1;
 	}
 	//uso un handler per gestire i file che il server mi manda per fare spazio
+	if(retval == 1 && !quiet) fprintf(stdout, "[CLIENT] Storage pieno, uno o piu' file verra' espulso dal server\n");
 	while(retval == 1) retval = capacityMissHandler(dirname);
 	//leggo l'esito della scrittura
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
 	if(!quiet && retval == 0) 
-		fprintf(stdout, "[CLIENT] Scritto sul server il file %s (%ld Bytes)\n", pathname, fsize);
+		fprintf(stdout, "[CLIENT] Scritto sul server il file %s (%ld MB)\n", pathname, fsize/1024/1024);
 	
 	free(buffer);
 	free(rts);
@@ -198,26 +200,20 @@ int capacityMissHandler(const char *dirname) {
 	char *buf = NULL;
 	char synch = 's';
 
-	//per qualche ragione le realloc non funzionano se non faccio prima una malloc
-	//fixare in seguito se rimane tempo
-	buf = malloc(64);
-	if(buf == NULL) {
-		perror("malloc");
-		return -1;
-	}
 	//leggo il nome del file
 	SYSCALL_RETURN("read", ret, readn(connfd, &namelen, sizeof(size_t)), "ricevendo dati dal server", "");
 	SYSCALL_RETURN("read", ret, readn(connfd, fname, namelen), "ricevendo dati dal server", "");
 	fname[namelen] = '\0'; //per la stampa del nome, in caso del salvataggio 
 	//leggo il contenuto del file
 	SYSCALL_RETURN("read", ret, readn(connfd, &expfsize, sizeof(size_t)), "ricevendo dati dal server", "");
-	if(realloc(buf, expfsize) == NULL) {
-		perror("realloc");
+	buf = malloc(expfsize*sizeof(char)); 
+	if(buf == NULL) {
+		perror("malloc");
 		return -1;
 	}
 	SYSCALL_RETURN("read", ret, readn(connfd, buf, expfsize), "ricevendo dati dal server", ""); 
 
-	if(!quiet) fprintf(stdout, "[CLIENT] Ricevuto il file %s (%ld Bytes) a seguito di un capacity miss\n", fname, expfsize);
+	if(!quiet) fprintf(stdout, "[CLIENT] Ricevuto il file %s (%ld MB) a seguito di un capacity miss\n", fname, expfsize/1024/1024);
 
 	//se specificato devo salvare il file
 	if(dirname != NULL) {
@@ -334,13 +330,6 @@ int readNFiles(int N, const char* dirname) {
 	char fname[PATH_MAX];
 	char *buf = NULL;
 
-	//per qualche ragione le realloc non funzionano se non faccio prima una malloc
-	//fixare in seguito se rimane tempo
-	buf = malloc(64);
-		if(buf == NULL) {
-			perror("malloc");
-			return -1;
-		}
 	char synch = 's';
 	//non so a priori quanti file sono presenti sul server, devo essere notificato
 	SYSCALL_RETURN("read", ret, readn(connfd, &end, sizeof(int)), "ricevendo dati dal server", ""); 
@@ -352,13 +341,14 @@ int readNFiles(int N, const char* dirname) {
 		fname[namelen] = '\0'; //per la stampa del nome, in caso del salvataggio 
 		//leggo il contenuto del file
 		SYSCALL_RETURN("read", ret, readn(connfd, &fsize, sizeof(size_t)), "ricevendo dati dal server", "");
-		if(realloc(buf, fsize) == NULL) {
-			perror("realloc");
+		buf = malloc(fsize);
+		if(buf == NULL) {
+			perror("malloc");
 			return -1;
 		}
 		SYSCALL_RETURN("read", ret, readn(connfd, buf, fsize), "ricevendo dati dal server", ""); 
 
-		if(!quiet) printf("[CLIENT] Letto il file %s (%ld Bytes)\n", fname, fsize);
+		if(!quiet) printf("[CLIENT] Letto il file %s (%ld MB)\n", fname, fsize/1024/1024);
 		//se specificato devo salvare il file
 		if(dirname != NULL) saveFile(dirname, fname, buf, fsize);
 
@@ -367,11 +357,11 @@ int readNFiles(int N, const char* dirname) {
 		//leggo se c'e' un altro file in arrivo
 		SYSCALL_RETURN("read", ret, readn(connfd, &end, sizeof(int)), "ricevendo dati dal server", "");
 		count++;
+		free(buf);
 	}
 	if(end == -1) fprintf(stderr, "[CLIENT] Errore nella lettura files\n");
 	else if(count == 0 && !quiet) printf("[CLIENT] Nessun file presente sul server\n");
 
-	if(buf) free(buf);
 	free(rts);
 	if(delay) msleep(ms_delay);
 	return count;
@@ -384,6 +374,7 @@ int unlockFile(const char* pathname) {
 	if(rts == NULL) return -1;
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	free(rts);
 	if(delay) msleep(ms_delay);
 	return retval;
 }
@@ -395,6 +386,7 @@ int lockFile(const char* pathname) {
 	if(rts == NULL) return -1;
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	free(rts);
 	if(delay) msleep(ms_delay);
 	return retval;
 }
@@ -406,6 +398,7 @@ int removeFile(const char* pathname) {
 	if(rts == NULL) return -1;
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	free(rts);
 	if(delay) msleep(ms_delay);
 	return retval;
 }
@@ -417,6 +410,7 @@ int closeFile(const char* pathname){
 	if(rts == NULL) return -1;
 	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
+	free(rts);
 	if(delay) msleep(ms_delay);
 	return retval;
 }

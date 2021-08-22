@@ -82,7 +82,7 @@ config_t * read_config(char * conf_path) {
 	//MAX FILES IN MEMORY (i=3)
 	conf->mem_files = strtol(bufptr[3], NULL, 10);
 	//MEMORY SIZE (i=4)
-	conf->mem_bytes = strtol(bufptr[4], NULL, 10);
+	conf->mem_bytes = strtol(bufptr[4], NULL, 10) * 1024 * 1024; //conversione MB
 
 	MAX_CAP = conf->mem_bytes;
 	MAX_FIL = conf->mem_files;

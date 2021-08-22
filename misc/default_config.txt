@@ -1,0 +1,7 @@
+# mantenere i valori ordinati e contenuti da ""
+
+SOCK_NAME		"./tmp/LSOfilestorage" 
+LOG_NAME		"./log/LSOfilelog.txt"
+NUM_WORKERS		"5"
+MEM_MAX_FILES	"1000"
+MEM_MBYTES		"6"

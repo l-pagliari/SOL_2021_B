@@ -332,7 +332,7 @@ int icl_hash_dump(FILE* stream, icl_hash_t* ht)
         bucket = ht->buckets[i];
         for(curr=bucket; curr!=NULL; ) {
             if(curr->key) {
-                fprintf(stream, "|| %s\t[%ld bytes] ||\n", (char*)curr->key, ((file_t*)curr->data)->file_size);
+                fprintf(stream, "%s [%ld MB]\n", (char*)curr->key, (((file_t*)curr->data)->file_size)/1024/1024);
             }
             curr=curr->next;
         }
