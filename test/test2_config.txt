@@ -1,0 +1,5 @@
+SOCK_NAME		"./tmp/LSOfilestorage" 
+LOG_NAME		"./log/LSOfilelog.txt"
+NUM_WORKERS		"4"
+MEM_MAX_FILES	"10"
+MEM_MBYTES		"1"

@@ -8,52 +8,66 @@ LIBS		= -lpthread
 
 SRCDIR		= ./src/
 LIBDIR		= ./lib/
+OBJDIR		= ./obj/
+BINDIR		= ./bin/
 
-TARGETS		= server	\
-			  client
+TARGETS		= $(BINDIR)server	\
+			  $(BINDIR)client
 
-.PHONY: all clean cleanall
+.PHONY: all clean cleanall cleantest test1 test2
 .SUFFIXES: .c .h 
 
-%.o: $(SRCDIR)%.c
+$(OBJDIR)%.o: $(SRCDIR)%.c
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -c -o $@ $<
 
 all: $(TARGETS)
 
-server: server.o sconfig.o worker.o list.o queue.o $(LIBDIR)libPool.a $(LIBDIR)libHash.a
+$(BINDIR)server: $(OBJDIR)server.o $(OBJDIR)sconfig.o $(OBJDIR)worker.o $(OBJDIR)list.o $(OBJDIR)queue.o $(LIBDIR)libPool.a $(LIBDIR)libHash.a
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
-client: client.o api.o
+$(BINDIR)client: $(OBJDIR)client.o $(LIBDIR)libApi.a
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
-$(LIBDIR)libPool.a: threadpool.o
+$(LIBDIR)libPool.a: $(OBJDIR)threadpool.o
 	$(AR) $(ARFLAGS) $@ $<
 
-$(LIBDIR)libHash.a: icl_hash.o 
+$(LIBDIR)libHash.a: $(OBJDIR)icl_hash.o 
 	$(AR) $(ARFLAGS) $@ $<
 
-#$(LIBDIR)libApi.a: api.o 
-#	$(AR) $(ARFLAGS) $@ $<	
+$(LIBDIR)libApi.a: $(OBJDIR)api.o 
+	$(AR) $(ARFLAGS) $@ $<	
 
-server.o: $(SRCDIR)server.c
+$(OBJDIR)server.o: $(SRCDIR)server.c
 
-sconfig.o: $(SRCDIR)sconfig.c
+$(OBJDIR)sconfig.o: $(SRCDIR)sconfig.c
 
-worker.o: $(SRCDIR)worker.c
+$(OBJDIR)worker.o: $(SRCDIR)worker.c
 
-list.o: $(SRCDIR)list.c
+$(OBJDIR)list.o: $(SRCDIR)list.c
 
-queue.o: $(SRCDIR)queue.c
+$(OBJDIR)queue.o: $(SRCDIR)queue.c
 
-threadpool.o: $(SRCDIR)threadpool.c 
+$(OBJDIR)threadpool.o: $(SRCDIR)threadpool.c 
 
-icl_hash.o: $(SRCDIR)icl_hash.c
+$(OBJDIR)icl_hash.o: $(SRCDIR)icl_hash.c
 
-client.o: $(SRCDIR)client.c 
+$(OBJDIR)client.o: $(SRCDIR)client.c 
 
-api.o: $(SRCDIR)api.c
+$(OBJDIR)api.o: $(SRCDIR)api.c
 
+test1		: 	cleantest
+	@echo [INIZIO TEST 1]
+	bash script/test1.sh
+	@echo [FINE TEST 1]
+
+test2		: 	cleantest
+	@echo [INIZIO TEST 2]
+	bash script/test2.sh
+	@echo [FINE TEST 2]
+
+cleantest	:
+	rm -f test/expelled/* test/readsave/*
 clean		: 
 	rm -f $(TARGETS)
 cleanall	: clean
-	\rm -f *.o *~ $(LIBDIR)*.a LSOfilestorage
+	\rm -f *~ $(OBJDIR)*.o $(LIBDIR)*.a ./log/* ./tmp/*

@@ -20,7 +20,7 @@
 #include <icl_hash.h>
 
 #ifndef CONFIG_PATH
-#define CONFIG_PATH "bin/config.txt"
+#define CONFIG_PATH "misc/default_config.txt"
 #endif
 
 //variabili globali di terminazione
@@ -42,11 +42,12 @@ long CUR_FIL = 0;
 long max_saved_files = 0;
 long max_reached_memory = 0;
 long num_capacity_miss = 0;
-
 pthread_mutex_t storemtx = PTHREAD_MUTEX_INITIALIZER;
 
 //usata per il timestamp nel file di log
 char timestr[11];
+FILE *logfd = NULL;
+pthread_mutex_t logmtx = PTHREAD_MUTEX_INITIALIZER;
 
 //usata per passare gli argomenti al signal handler
 typedef struct {
@@ -60,7 +61,7 @@ typedef struct {
 */
 static void *sigHandler(void *arg) {
 	sigset_t *set = ((sigHandler_t*)arg)->set;
-    int fd_pipe = ((sigHandler_t*)arg)->signal_pipe;
+   int fd_pipe = ((sigHandler_t*)arg)->signal_pipe;
 	for(;;) {
 		int sig;
 		int r = sigwait(set, &sig);
@@ -91,7 +92,10 @@ int main(int argc, char* argv[]) {
 	**essendo essenziale all'avvio del server, in caso di errore il programma termina immediatamente
 	**ed il messaggio di errore e' gestito dalla funzione stessa */
 	config_t * config;
-	config = read_config(CONFIG_PATH);
+	if(argc == 2)
+		config = read_config(argv[1]);
+	else
+		config = read_config(CONFIG_PATH);
 
 	/* BLOCCO GESTIONE SEGNALI	*/
 	sigset_t mask;
@@ -166,10 +170,6 @@ int main(int argc, char* argv[]) {
     }
     /* creo la tabella hash utilizzata come data structure per lo storage server, il numero
        massimo di file(entry) che puo' ospitare e' fisso quindi non occorre fare resize in seguito */
-	
-
-	//icl_hash_t *hash = NULL;
-    //hash 
     table = icl_hash_create(config->mem_files, NULL, NULL);
     if (!table) {
     	fprintf(stderr, "errore nella creazione della tabella hash\n");
@@ -189,6 +189,15 @@ int main(int argc, char* argv[]) {
     	free_config(config);
     	exit(EXIT_FAILURE);
     }
+   logfd = fopen(config->log_name, "w+");
+   if(!logfd) {
+   	fprintf(stderr, "errore nell'apertura del file di log\n");
+    	destroyThreadPool(pool, 0); 
+    	icl_hash_destroy(table, &free, &freeFile);
+    	unlink(config->sock_name);
+    	free_config(config);
+    	exit(EXIT_FAILURE);
+   }
 	/* FINE BLOCCO SOCKET+STRUTTURE DATI */
 
 	/* BLOCCO SELECT */
@@ -284,8 +293,11 @@ int main(int argc, char* argv[]) {
                        termina 	->	forzo la chiusura di tutti worker attivi e termino 
                        				il prima possibile */
                     if(sig==SIGHUP) {
-                    	fprintf(stdout, "%s[LOG] Recieved SIGHUP, closing upcoming connections\n",tStamp(timestr));
+                    	LOCK(&logmtx);
+                    	fprintf(logfd, "%s[LOG] Recieved SIGHUP, closing upcoming connections\n",tStamp(timestr));
+                    	UNLOCK(&logmtx);
                     	hangup = 1;
+                    	if(clients == 0) termina = 1;
           			}else 
 						termina = 1;
 		    		break;
@@ -310,13 +322,13 @@ int main(int argc, char* argv[]) {
 
     /* BLOCCO STAMPA CHIUSURA SERVER E CLEANUP */
 	printf("\n[SERVER CLOSING] max files saved:\t%ld\n"
-				"[SERVER CLOSING] max bytes occupied:\t%ld\n"
+				"[SERVER CLOSING] max MB occupied:\t%ld\n"
 				"[SERVER CLOSING] capacity misses:\t%ld\n"
 			   "[SERVER CLOSING] files in storage:\t%ld / %ld\n"
 				"[SERVER CLOSING] storage capacity:\t%ld / %ld\n"
 				"[SERVER CLOSING] list of files currently in storage:\n",
-			max_saved_files, max_reached_memory, num_capacity_miss, 
-			CUR_FIL ,MAX_FIL, CUR_CAP, MAX_CAP);
+			max_saved_files, max_reached_memory/1024/1024, num_capacity_miss, 
+			CUR_FIL ,MAX_FIL, CUR_CAP/1024/1024, MAX_CAP/1024/1024);
 	icl_hash_dump(stdout, table);
 	
 	destroyThreadPool(pool, 0); 
@@ -325,10 +337,7 @@ int main(int argc, char* argv[]) {
     free_config(config);
     freeQueue(replace_queue);
     cleanuplist_free();
+    fclose(logfd);
     pthread_join(sighandler_thread, NULL);
     return 0;    
 }
-
-/* TO DO:
-	-endpoint di scrittura pipe sig atomic
-*/

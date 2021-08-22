@@ -28,6 +28,10 @@ extern int req_pipe;
 
 extern int quiet;
 
+extern FILE *logfd;
+extern pthread_mutex_t logmtx;
+
+
 //usata all'avvio del server per salvare i valori di configurazione
 typedef struct {
 	char*	sock_name;
@@ -50,7 +54,6 @@ typedef struct {
     int     arg;
     pid_t   cid;
     char    filepath[PATH_MAX];
-    //char    dirpath[PATH_MAX]; non sono sicuro serva
 } request_t;
 
 typedef struct {

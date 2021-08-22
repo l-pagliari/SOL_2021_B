@@ -119,15 +119,15 @@ int main(int argc, char *argv[]) {
 					if(r == 0)
 						r = readFile(token, &memptr, &fsize);
 					if(r == 0) {
-						if(!quiet) printf("[CLIENT] Letto il file %s (%ld Bytes)\n", token, fsize);
+						if(!quiet) printf("[CLIENT] Letto il file %s (%ld MB)\n", token, fsize/1024/1024);
 						if(read_dir) r = saveFile(read_dir, token, memptr, fsize);
+						if(memptr) free(memptr);
 						/*if(r == 0) {
 							if(!quiet) printf("[CLIENT] Salvato il file %s nella directory %s\n", token, read_dir);
 						}*/
 						r = closeFile(token);
 						if(r == -1) printf("[CLIENT] Errore nella chiusura del file\n");
 					}
-					if(memptr) free(memptr);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);	
 				break;

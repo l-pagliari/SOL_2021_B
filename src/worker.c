@@ -55,7 +55,9 @@ void workerF(void *arg) {
 		switch(req->type){
 			
 			case OPEN_CONNECTION:
-				fprintf(stdout, "%s[LOG] Opened connection (client %d)\n", tStamp(timestr), (int)req->cid);		
+				LOCK(&logmtx);
+				fprintf(logfd, "%s[LOG] Opened connection (client %d)\n", tStamp(timestr), (int)req->cid);
+				UNLOCK(&logmtx);		
 				if(write(req_pipe, &connfd, sizeof(long)) == -1) 
 					fprintf(stderr, "errore scrivendo nella request pipe");
     			break;
@@ -66,7 +68,9 @@ void workerF(void *arg) {
 				}
 				clients--;
     			close(connfd);
-    			fprintf(stdout, "%s[LOG] Closed connection (client %d)\n", tStamp(timestr), (int)req->cid);
+    			LOCK(&logmtx);
+    			fprintf(logfd, "%s[LOG] Closed connection (client %d)\n", tStamp(timestr), (int)req->cid);
+    			UNLOCK(&logmtx);
     			//se ho ricevuto hangup e questo era l'ultimo client attivo, lo notifico al server
     			if(hangup == 1 && clients == 0) {
     				printf("HANGUP: tutti i task sono terminati, chiudo\n");
@@ -228,12 +232,16 @@ int handler_openfile(long fd, request_t * req) {
 		UNLOCK_RETURN(&(table->lock), -1);
 		//scrivo l'esito delle operazioni sul log
 		if(data->lock_flag == 1) {
-			fprintf(stdout, "%s[LOG] Open-Locked file %s\n", tStamp(timestr), key);
+			LOCK_RETURN(&logmtx, -1);
+			fprintf(logfd, "%s[LOG] Open-Locked file %s\n", tStamp(timestr), key);
+			UNLOCK_RETURN(&logmtx, -1);
 			//voglio ricordarmi che il file identificato da key e' stato lockato da id
 			cleanuplist_ins(id, key);
 		}
 		else {
-			fprintf(stdout, "%s[LOG] Opened file %s\n", tStamp(timestr), key);
+			LOCK_RETURN(&logmtx, -1);
+			fprintf(logfd, "%s[LOG] Opened file %s\n", tStamp(timestr), key);
+			UNLOCK_RETURN(&logmtx, -1);
 		}
 
 	}
@@ -261,7 +269,9 @@ int handler_openfile(long fd, request_t * req) {
 			fprintf(stderr, "[SERVER] Errore: file gia' lockato\n");
 			return -1;
 		}
-		fprintf(stdout, "%s[LOG] Open-Locked existing file %s\n", tStamp(timestr), key);
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] Open-Locked existing file %s\n", tStamp(timestr), key);
+		UNLOCK_RETURN(&logmtx, -1);
 		//devo ricordarmi da qualche parte che il file identificato da key e' stato lockato da id
 		cleanuplist_ins(id, key);
 		free(key);
@@ -277,7 +287,10 @@ int handler_openfile(long fd, request_t * req) {
 		LOCK_RETURN(&(table->lock), -1);
 		data->open_flag = 1;
 		UNLOCK_RETURN(&(table->lock), -1);
-		fprintf(stdout, "%s[LOG] Opened file %s\n", tStamp(timestr), key);
+
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] Opened file %s\n", tStamp(timestr), key);
+		UNLOCK_RETURN(&logmtx, -1);
 		free(key);
 	}
 	return 0;			
@@ -299,8 +312,9 @@ int handler_closefile(long fd, request_t * req) {
 	data->open_flag = 0;
 	UNLOCK_RETURN(&(table->lock), -1);
 
-	fprintf(stdout, "%s[LOG] Closed file %s\n", tStamp(timestr), key);
-
+	LOCK_RETURN(&logmtx, -1);
+	fprintf(logfd, "%s[LOG] Closed file %s\n", tStamp(timestr), key);
+	UNLOCK_RETURN(&logmtx, -1);
 	return 0;
 }
 
@@ -382,9 +396,9 @@ int handler_writefile(long fd, request_t * req) {
 	data->file_size = fsize;
 	//metto il nuovo file nella coda di rimpiazzamento
 	q_put(replace_queue, key);
-		
-	fprintf(stdout, "%s[LOG] Writed file %s (%d Bytes)\n", tStamp(timestr), (char*)key, (int)fsize);
-
+	LOCK_RETURN(&logmtx, -1);
+	fprintf(logfd, "%s[LOG] Writed file %s (%d Bytes)\n", tStamp(timestr), (char*)key, (int)fsize);
+	UNLOCK_RETURN(&logmtx, -1);
 	free(buf);
 	return 0;
 }
@@ -407,9 +421,10 @@ int handler_readfile(long fd, request_t * req) {
 	SYSCALL_RETURN("write", ret, writen(fd, &(data->file_size), sizeof(size_t)), "inviando dati al client", "");
 	SYSCALL_RETURN("write", ret, writen(fd, data->contenuto, data->file_size), "inviando dati al client", "");
 	UNLOCK_RETURN(&(table->lock), -1);
-		
-	fprintf(stdout, "%s[LOG] Read file %s (%d Bytes)\n", tStamp(timestr), (char*)key, (int)data->file_size);
-
+	
+	LOCK_RETURN(&logmtx, -1);
+	fprintf(logfd, "%s[LOG] Read file %s (%d Bytes)\n", tStamp(timestr), (char*)key, (int)data->file_size);
+	UNLOCK_RETURN(&logmtx, -1);
 	return 0;
 } 
 
@@ -425,7 +440,9 @@ int unlock_atexit(icl_hash_t * table, char * key) {
 		SIGNAL(&data->cond);	//se c'e' un altro worker in attesa del file lo avverto
 		UNLOCK_RETURN(&(table->lock), -1);
 
-		fprintf(stdout, "%s[LOG] Unlocked file (at exit) %s\n", tStamp(timestr), (char*)key);
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] Unlocked file (at exit) %s\n", tStamp(timestr), (char*)key);
+		UNLOCK_RETURN(&logmtx, -1);
 	} else return -1;
 	cleanuplist_del(key);
 	return 0;
@@ -464,9 +481,11 @@ int rimpiazzamento_fifo(long fd) {
 		r = icl_hash_delete(table, key, &free, &freeFile);
 		UNLOCK_RETURN(&(table->lock), -1);
 		if(r == -1) return -1;
-	
-		fprintf(stdout, "%s[LOG] CAPACITY MISS: Removed file %s (%ld Bytes)\n", tStamp(timestr), key, size);
-			
+		
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] CAPACITY MISS: Removed file %s (%ld Bytes)\n", tStamp(timestr), key, size);
+		UNLOCK_RETURN(&logmtx, -1);
+
 		//aggiorno i valori
 		LOCK_RETURN(&storemtx, -1); 
 		CUR_CAP = CUR_CAP - size;
@@ -534,7 +553,9 @@ int handler_read_n_files(long fd, request_t * req) {
 		SYSCALL_RETURN("write", unused, writen(fd, &newfile->file_size, sizeof(size_t)), "inviando dati al client", "");
 		SYSCALL_RETURN("write", unused, writen(fd, newfile->contenuto, newfile->file_size), "inviando dati al client", "");
 
-		fprintf(stdout, "%s[LOG] Read file %s (%d Bytes)\n", tStamp(timestr), newfile->file_name, (int)newfile->file_size);
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] Read file %s (%d Bytes)\n", tStamp(timestr), newfile->file_name, (int)newfile->file_size);
+		UNLOCK_RETURN(&logmtx, -1);
 
 		//leggo un byte per sapere che il client ha ricevuto il file
 		SYSCALL_RETURN("read", unused, read(fd, &synch, 1), "leggendo dati dal client", "");
@@ -569,8 +590,10 @@ int handler_lockfile(long fd, request_t * req) {
 		} else check = 0;
 		UNLOCK_RETURN(&(table->lock), -1);
 		if(check == 0) return -1;
-			
-		fprintf(stdout, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);
+		
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);
+		UNLOCK_RETURN(&logmtx, -1);
 
 		//devo ricordarmi che il file identificato da key e' stato lockato da id
 		cleanuplist_ins(id, key);
@@ -585,8 +608,10 @@ int handler_lockfile(long fd, request_t * req) {
 	data->lock_flag = 1;		
 	data->locked_by = id;
 	UNLOCK_RETURN(&(table->lock), -1);
-		
-	fprintf(stdout, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);	
+	
+	LOCK_RETURN(&logmtx, -1);
+	fprintf(logfd, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);	
+	UNLOCK_RETURN(&logmtx, -1);
 	
 	//aggiungo il file alla lista di cleanup
 	cleanuplist_ins(id, key);
@@ -614,8 +639,9 @@ int handler_unlockfile(long fd, request_t * req) {
 		SIGNAL(&data->cond);	//se c'e' un altro worker in attesa del file lo avverto
 		UNLOCK_RETURN(&(table->lock), -1);
 
-		fprintf(stdout, "%s[LOG] Unlocked file %s\n", tStamp(timestr), (char*)key);
-
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] Unlocked file %s\n", tStamp(timestr), (char*)key);
+		UNLOCK_RETURN(&logmtx, -1);
 		//tolgo il file dalla lista di cleanup
 		cleanuplist_del(key);
 	}
@@ -660,11 +686,13 @@ int handler_removefile(long fd, request_t * req) {
 		CUR_FIL = CUR_FIL - 1;
 		UNLOCK_RETURN(&storemtx, -1);
 		
-		fprintf(stdout, "%s[LOG] Removed file %s (%ld Bytes)\n", tStamp(timestr), key, fsize);
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] Removed file %s (%ld Bytes)\n", tStamp(timestr), key, fsize);
+		UNLOCK_RETURN(&logmtx, -1);
 		
 		return 0;
 	}
-	fprintf(stderr, "[SERVER] Errore remove: lock non posseduta\n");
+	//fprintf(stderr, "[SERVER] Errore remove: lock non posseduta\n");
 	return -1;
 }
 
