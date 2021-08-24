@@ -43,6 +43,7 @@ long max_saved_files = 0;
 long max_reached_memory = 0;
 long num_capacity_miss = 0;
 pthread_mutex_t storemtx = PTHREAD_MUTEX_INITIALIZER;
+int max_clients = 0;
 
 //usata per il timestamp nel file di log
 char timestr[11];
@@ -257,7 +258,15 @@ int main(int argc, char* argv[]) {
 					 	close(connfd);
 					 	continue;
 					}
+
+					if(clients == config->num_workers) {
+						printf("SERVER BUSY... try again\n");
+					 	close(connfd);
+					 	continue;
+					}
+					
 					clients++;
+					if(clients>max_clients) max_clients = clients;
 					FD_SET(connfd, &set);  
 		  			if(connfd > fdmax) {
 		  				oldmax = fdmax; 
@@ -309,11 +318,14 @@ int main(int argc, char* argv[]) {
 				//notifico il pool che c'e' un nuovo task
 				n = addToThreadPool(pool, workerF, &connfd);
 		    	if (n==0) 
+		    		//if(fdmax == connfd) fdmax = oldmax;
+					//FD_CLR(connfd, &set);
 		    		continue; 
 		    	if (n<0) 
 					fprintf(stderr, "FATAL ERROR, adding to the thread pool\n");
-		  		else 
+		  		else {
 					fprintf(stderr, "SERVER TOO BUSY\n");
+				}
 		    }
 			continue;
 		}//end for
@@ -321,23 +333,30 @@ int main(int argc, char* argv[]) {
     /* FINE BLOCCO SELECT */
 
     /* BLOCCO STAMPA CHIUSURA SERVER E CLEANUP */
-	printf("\n[SERVER CLOSING] max files saved:\t%ld\n"
+	printf("\n[SERVER CLOSING] max clients connected:\t%d\n"
+				"[SERVER CLOSING] max files saved:\t%ld\n"
 				"[SERVER CLOSING] max MB occupied:\t%ld\n"
 				"[SERVER CLOSING] capacity misses:\t%ld\n"
 			   "[SERVER CLOSING] files in storage:\t%ld / %ld\n"
 				"[SERVER CLOSING] storage capacity:\t%ld / %ld\n"
 				"[SERVER CLOSING] list of files currently in storage:\n",
-			max_saved_files, max_reached_memory/1024/1024, num_capacity_miss, 
+			max_clients, max_saved_files, max_reached_memory/1024/1024, num_capacity_miss, 
 			CUR_FIL ,MAX_FIL, CUR_CAP/1024/1024, MAX_CAP/1024/1024);
 	icl_hash_dump(stdout, table);
 	
+	LOCK(&logmtx);
+	fprintf(logfd, "%s[LOG] MAX CLIENTS: %d\n",tStamp(timestr), max_clients);
+	fprintf(logfd, "%s[LOG] MAX CAPACITY: %ld\n",tStamp(timestr), max_reached_memory);
+	fprintf(logfd, "%s[LOG] MAX FILES: %ld\n",tStamp(timestr), max_saved_files);
+	UNLOCK(&logmtx);
+
 	destroyThreadPool(pool, 0); 
-    icl_hash_destroy(table, &free, &freeFile);
-    unlink(config->sock_name);
-    free_config(config);
-    freeQueue(replace_queue);
-    cleanuplist_free();
-    fclose(logfd);
-    pthread_join(sighandler_thread, NULL);
-    return 0;    
+   icl_hash_destroy(table, &free, &freeFile);
+   unlink(config->sock_name);
+   free_config(config);
+   freeQueue(replace_queue);
+   cleanuplist_free();
+   fclose(logfd);
+   pthread_join(sighandler_thread, NULL);
+   return 0;    
 }

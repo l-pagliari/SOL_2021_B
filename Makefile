@@ -14,7 +14,7 @@ BINDIR		= ./bin/
 TARGETS		= $(BINDIR)server	\
 			  $(BINDIR)client
 
-.PHONY: all clean cleanall cleantest test1 test2
+.PHONY: all clean cleanall cleantest test1 test2 test3
 .SUFFIXES: .c .h 
 
 $(OBJDIR)%.o: $(SRCDIR)%.c
@@ -71,9 +71,14 @@ test2		: 	cleantest
 	bash script/test2.sh
 	@echo [FINE TEST 2]
 
+test3		: 	cleantest
+	@echo [INIZIO TEST 2]
+	bash script/test3.sh
+	@echo [FINE TEST 2]
+
 cleantest	:
 	rm -f test/expelled/* test/readsave/*
 clean		: 
 	rm -f $(TARGETS)
-cleanall	: clean
+cleanall	: clean cleantest
 	\rm -f *~ $(OBJDIR)*.o $(LIBDIR)*.a ./log/* ./tmp/*
