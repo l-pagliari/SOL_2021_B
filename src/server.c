@@ -86,6 +86,7 @@ static void *sigHandler(void *arg) {
     }
     return NULL;	   
 }
+void busy_handler(long fd, int t);
 
 int main(int argc, char* argv[]) {
 
@@ -162,7 +163,7 @@ int main(int argc, char* argv[]) {
 	/*creo il threadpool per gestire le richieste utilizzo il modello 1 thread 1 richiesta, 
       nessun task pendente se tutti i thread sono occupati */
     threadpool_t *pool = NULL;
-	pool = createThreadPool(config->num_workers, 0); 
+	pool = createThreadPool(config->num_workers, 20); 
     if(!pool) {
     	fprintf(stderr, "errore nella creazione del thread pool\n");
     	unlink(config->sock_name);
@@ -204,6 +205,7 @@ int main(int argc, char* argv[]) {
 	/* BLOCCO SELECT */
 	char buf[BUFSIZE];
 	int n;
+	//int errn;
 	fd_set set, tmpset;
    FD_ZERO(&set);
    FD_ZERO(&tmpset);
@@ -260,8 +262,8 @@ int main(int argc, char* argv[]) {
 					}
 
 					if(clients == config->num_workers) {
-						printf("SERVER BUSY... try again\n");
-					 	close(connfd);
+						//printf("SERVER BUSY... try again\n");
+					 	busy_handler(connfd, err_server_busy); //chiude la connessione in maniera pulita
 					 	continue;
 					}
 					
@@ -318,13 +320,13 @@ int main(int argc, char* argv[]) {
 				//notifico il pool che c'e' un nuovo task
 				n = addToThreadPool(pool, workerF, &connfd);
 		    	if (n==0) 
-		    		//if(fdmax == connfd) fdmax = oldmax;
-					//FD_CLR(connfd, &set);
 		    		continue; 
 		    	if (n<0) 
 					fprintf(stderr, "FATAL ERROR, adding to the thread pool\n");
 		  		else {
-					fprintf(stderr, "SERVER TOO BUSY\n");
+					//fprintf(stderr, "SERVER TOO BUSY\n");
+					busy_handler(connfd, err_worker_busy);
+					//per il momento la chiudo poi vedo se posso fare di meglio
 				}
 		    }
 			continue;
@@ -359,4 +361,26 @@ int main(int argc, char* argv[]) {
    fclose(logfd);
    pthread_join(sighandler_thread, NULL);
    return 0;    
+}					
+
+
+void busy_handler(long fd, int t) {
+
+	request_t * req;
+	int errn = t;
+	req = malloc(sizeof(request_t));
+	if(req == NULL) {
+		fprintf(stderr, "errore malloc request\n");
+		return;
+	}
+	if(readn(fd, req, sizeof(request_t)) == -1) {
+		fprintf(stderr, "errore lettura richiesta client\n");
+		return;
+	}				
+	if(writen(fd, &errn, sizeof(int)) == -1) {
+		perror("write");
+		exit(EXIT_FAILURE);
+	}
+	close(fd);
+	free(req);
 }

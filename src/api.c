@@ -10,6 +10,7 @@
 #include <libgen.h>
 #include <dirent.h>
 #include <pthread.h>
+#include <signal.h>
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -56,6 +57,44 @@ request_t * initRequest(int t, const char * fname, int n){
 	return req;
 }
 
+void print_err(char * str, int err);
+
+/* inizializzo la richiesta da mandare al server sottoforma di una struct, uguale
+   per ogni richiesta */
+
+int sendRequest(int type, const char * filename, int flag, long fd){
+	int ret, r;
+	request_t * req = NULL;
+	if((req = malloc(sizeof(request_t))) == NULL) {
+		//perror("malloc");
+		return err_memory_alloc;
+	}
+	req->type = type;
+	/*utilizzo il pid come identificativo del client, ci sono altri modi se non 
+	  sufficiente ma per gli scopi del progetto lo ritengo un buon compromesso */
+	req->cid = getpid();
+	req->arg = flag;
+	if(filename != NULL){
+		/* ricavo il path assoluto del file che viene usato come chiave unica per identificare
+		   il file nel server */
+		char abs_path[PATH_MAX];
+		char *ptr = NULL;
+		if((ptr = realpath(filename, abs_path)) == NULL) {
+			//fprintf(stderr, "%s non esiste\n", fname);
+			return err_path_invalid;
+		}
+		strncpy(req->filepath, abs_path, PATH_MAX);
+	} else memset(req->filepath, '\0', PATH_MAX); //valgrind
+	//invio la richiesta al server 
+	SYSCALL_EXIT("write", ret, writen(fd, req, sizeof(request_t)), "inviando dati al server", "");
+	//controllo server busy
+   SYSCALL_EXIT("read", ret, readn(fd, &r, sizeof(int)), "ricevendo dati al server", "");
+	free(req);  
+	return r;
+}
+
+
+
 /* prova a connettersi al server attraverso il socket sockname, se fallisce 
    riprova ad intervalli regolari msec fino al passaggio del tempo assoluto abstime */
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
@@ -77,90 +116,92 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     	maxtime = maxtime + msec;
     	printf("tento nuovamente a connettermi...\n");
     	if(maxtime >= abstime.tv_sec * 1000) {
+    		fprintf(stderr, "open connection: impossibile connettersi\n");
     		errno = ETIMEDOUT;
     		return -1;
 		}
    }
-   //mi sono connesso al socket, mando al server il nome del client
-   int ret;
-   request_t * rts;
-   rts = initRequest(OPEN_CONNECTION, NULL, 0);
-   if(rts == NULL) return -1;
-   SYSCALL_RETURN("write", ret, writen(sockfd, rts, sizeof(request_t)), "inviando dati al server", "");
-
+   int r;
+   r = sendRequest(OPEN_CONNECTION, NULL, 0, sockfd);
+   if(r<0) {
+   	print_err("open connection", r);
+   	return -1;
+   }
 	connfd = sockfd;
    socket_name = malloc(BUFSIZE*sizeof(char));
    strncpy(socket_name, sockname, BUFSIZE);
-   free(rts);
-
-   if(delay) msleep(ms_delay);;
+	if(delay) msleep(ms_delay);;
 	return 0;
 }
 
 int closeConnection(const char *sockname) {
 	if(strncmp(sockname, socket_name, BUFSIZE) != 0) {
-		errno = EINVAL;
-		return -1;
+		//errno = EINVAL;
+		return err_args_invalid;
 	}
-	request_t * rts;
-	rts = initRequest(CLOSE_CONNECTION, NULL, 0);
-	if(rts == NULL) return -1;
-	int ret;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	int r;
+   r = sendRequest(CLOSE_CONNECTION, NULL, 0, connfd);
 
-	close(connfd);
-
+   close(connfd);
 	connfd = -1;
   	if(socket_name) free(socket_name);
-  	//if(!quiet) fprintf(stdout, "[CLIENT] Chiusa la connessione con il socket %s\n", socket_name);
-  	free(rts);
+   if(r<0) {
+   	print_err("close connection", r);
+   	return -1;
+   }
 	return 0;
 }
 
 int openFile(const char *pathname, int flags) {
 
-	int ret, retval;
-	request_t * rts;
-	rts = initRequest(OPEN_FILE, pathname, flags);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
-
+	int ret, retval, r;
+   r = sendRequest(OPEN_FILE, pathname, flags, connfd);
+   if(r<0) {
+   	print_err("open file", r);
+   	return -1;
+   }
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati al server", "");
-	free(rts);
+	if(retval<0) {
+   	print_err("open file", retval);
+   	if(delay) msleep(ms_delay);
+   	return -1;
+   }
 	if(delay) msleep(ms_delay);
-	return retval;
+	return 0;
 }
 
 int writeFile(const char *pathname, const char *dirname) {
 
-	int ret, retval;
-	request_t * rts;
-	rts = initRequest(WRITE_FILE, pathname, 0);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	int ret, retval, r;
+	r = sendRequest(WRITE_FILE, pathname, 0, connfd);
+   if(r<0) {
+   	print_err("open file", r);
+   	return -1;
+   }
 	//leggo se il server e' pronto a ricevere il file
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-	if(retval == -1) return -1;
-	
+	if(retval<0) {
+   	print_err("write file", retval);
+   	return -1;
+   }
 	FILE *fp;
 	void *buffer;
 	size_t fsize, num;
 	struct stat statbuf;
-
 	// utilizzo stat per conoscere in anticipo la size del file che dovro' leggere 
 	SYSCALL_RETURN("stat", ret, stat(pathname, &statbuf), "facendo la stat del file in lettura", "");
 	if((fp = fopen(pathname, "r")) == NULL) {
-		perror("fopen");
+		perror("write file: fopen");
 		return -1;
 	}
 	fsize = statbuf.st_size;
 	if((buffer = malloc(fsize)) == NULL) {
-		perror("malloc");
+		perror("write file: malloc");
 		return -1;
 	}
 	num = fread(buffer, 1, fsize, fp);
 	if(num != fsize) {
-		fprintf(stderr, "errore nella lettura del file\n");
+		perror("write file: fwrite");
 		return -1;
 	}
 	fclose(fp);
@@ -172,10 +213,10 @@ int writeFile(const char *pathname, const char *dirname) {
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
 	//1.retval == 0: c'e' spazio
 	//2.retval == 1: il server deve espellere uno o piu' file per fare spazio al nuovo
-	//3.retval ==-1: si e' verificato un qualche tipo di errore
-	if(retval == -1) {
+	//3.retval < 0: si e' verificato un qualche tipo di errore
+	if(retval < 0) {
+		print_err("write file", retval);
 		free(buffer);
-		free(rts);
 		return -1;
 	}
 	//uso un handler per gestire i file che il server mi manda per fare spazio
@@ -183,13 +224,17 @@ int writeFile(const char *pathname, const char *dirname) {
 	while(retval == 1) retval = capacityMissHandler(dirname);
 	//leggo l'esito della scrittura
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-	if(!quiet && retval == 0) 
+	if(retval < 0) {
+		print_err("write file", retval);
+		free(buffer);
+		return -1;
+	}
+	if(!quiet) 
 		fprintf(stdout, "[CLIENT] Scritto sul server il file %s (%ld MB)\n", pathname, fsize/1024/1024);
 	
 	free(buffer);
-	free(rts);
 	if(delay) msleep(ms_delay);
-	return retval;
+	return 0;
 }
 		
 int capacityMissHandler(const char *dirname) {
@@ -237,22 +282,22 @@ int writeDirectory(const char *dirname, int max_files, const char *writedir) {
 
 	SYSCALL_EXIT(stat, r, stat(dirname, &statbuf), "facendo la stat di %s: errno =%d", dirname, errno);
 	if(!S_ISDIR(statbuf.st_mode)) {
-		fprintf(stderr, "%s non e' una directory\n", dirname);
+		fprintf(stderr, "write dir: directory non valida\n");
 		return -1;
 	}
 	if(chdir(dirname) == -1) {
-		fprintf(stderr,"impossibile entrare nella directory %s\n", dirname);
+		fprintf(stderr,"write dir: impossibile accedere a %s\n", dirname);
 		return -1;
 	}
 	if((dir = opendir(".")) == NULL) {
-		fprintf(stderr, "errore aprendo la directory %s\n", dirname);
+		fprintf(stderr, "write dir: errore apertura %s\n", dirname);
 		return -1;
 	} else {
 		struct dirent *file;
 		while((errno = 0, file = readdir(dir)) != NULL) {
 			struct stat statbuf;
 			if(stat(file->d_name, &statbuf) == -1) {
-				perror("stat");
+				perror("write dir: stat");
 				return -1;
 			}
 			//devo gestire il caso di sotto-directory, ricorsivamente
@@ -261,7 +306,7 @@ int writeDirectory(const char *dirname, int max_files, const char *writedir) {
 					//faccio find ricorsivamente nella sottocartella
 					if(writeDirectory(file->d_name, max_files, writedir) != -2) { 
 						if(chdir("..") == -1) {
-							fprintf(stderr, "impossibile risalire alla directory parent\n");
+							fprintf(stderr, "write dir: impossibile risalire alla directory parent\n");
 							return -1;
 						}
 					}
@@ -270,22 +315,22 @@ int writeDirectory(const char *dirname, int max_files, const char *writedir) {
 			else { //ho un effettivo file da mandare al server
 				int r;
 				r = openFile(file->d_name, O_CREATE|O_LOCK);
-				if(r == 0) r = writeFile(file->d_name, writedir);
-					else printf("Errore nella scrittura del file\n");
-				if(r == 0) r = closeFile(file->d_name);
-					else printf("Errore nella chiusura del file\n");
+				if(r == 0) {
+				 	writeFile(file->d_name, writedir);
+					closeFile(file->d_name);
+				}
 				if(max_files == 1) {
-					//printf("[CLIENT] Fine operazione\n");
-				 	return 0;
+					if(!quiet) fprintf(stdout, "[CLIENT] Letto il numero di file chiesto dalla directory\n");
+					return 0;
 				}
 				if(max_files > 1) max_files--;
 			}
 		}
 		//sono alla fine del while e devo controllare errno perche' non posso sapere perche' e' terminato
-		if(errno != 0) perror("readdir");
+		if(errno != 0) perror("write dir: readdir");
 		closedir(dir);
 	}
-	//printf("[CLIENT] Fine operazione\n");
+	if(!quiet) fprintf(stdout, "[CLIENT] Fine operazione di scrittura directory %s\n", dirname);
 	if(delay) msleep(ms_delay);
 	return 0;
 }
@@ -293,38 +338,37 @@ int writeDirectory(const char *dirname, int max_files, const char *writedir) {
 int readFile(const char* pathname, void** buf, size_t* size) {
 
 	int ret, retval;
-	request_t * rts;
-	rts = initRequest(READ_FILE, pathname, 0);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
-
-	//PARTE READ
+	retval = sendRequest(READ_FILE, pathname, 0, connfd);
+   if(retval<0) {
+   	print_err("read file", retval);
+   	return -1;
+   }
 	//retval mi dice se il file esiste o meno nel server
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-
-	if(retval == 0) {
-		SYSCALL_RETURN("read", ret, readn(connfd, size, sizeof(size_t)), "ricevendo dati dal server", ""); 
-		void* buf2 = malloc(*size);
-		if(buf2 == NULL) {
-			perror("malloc");
-			return -1;
-		}
-		SYSCALL_RETURN("read", ret, readn(connfd, buf2, *size), "ricevendo dati dal server", "");
-		(*buf) = buf2;
+	if(retval<0) {
+   	print_err("read file", retval);
+   	return -1;
+   }
+	SYSCALL_RETURN("read", ret, readn(connfd, size, sizeof(size_t)), "ricevendo dati dal server", ""); 
+	void* buf2 = malloc(*size);
+	if(buf2 == NULL) {
+		perror("read file: malloc");
+		return -1;
 	}
-	free(rts);
+	SYSCALL_RETURN("read", ret, readn(connfd, buf2, *size), "ricevendo dati dal server", "");
+	(*buf) = buf2;
+	
 	if(delay) msleep(ms_delay);
-	return retval;
+	return 0;
 }
 
 int readNFiles(int N, const char* dirname) {
-	int ret;
-	request_t * rts;
-	rts = initRequest(READ_N_FILES, NULL, N);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
-
-	//PARTE READ N
+	int ret, retval;
+	retval = sendRequest(READ_N_FILES, NULL, N, connfd);
+   if(retval<0) {
+   	print_err("read file", retval);
+   	return -1;
+   }
 	int end, count = 0;
 	size_t fsize, namelen;
 	char fname[PATH_MAX];
@@ -343,7 +387,7 @@ int readNFiles(int N, const char* dirname) {
 		SYSCALL_RETURN("read", ret, readn(connfd, &fsize, sizeof(size_t)), "ricevendo dati dal server", "");
 		buf = malloc(fsize);
 		if(buf == NULL) {
-			perror("malloc");
+			perror("read N: malloc");
 			return -1;
 		}
 		SYSCALL_RETURN("read", ret, readn(connfd, buf, fsize), "ricevendo dati dal server", ""); 
@@ -359,60 +403,83 @@ int readNFiles(int N, const char* dirname) {
 		count++;
 		free(buf);
 	}
-	if(end == -1) fprintf(stderr, "[CLIENT] Errore nella lettura files\n");
-	else if(count == 0 && !quiet) printf("[CLIENT] Nessun file presente sul server\n");
+	if(end < 0) {
+		print_err("read N", end);
+		if(delay) msleep(ms_delay);
+		return -1;
+	}
+	else if(count == 0 && !quiet) fprintf(stdout, "[CLIENT] Nessun file presente sul server\n");
 
-	free(rts);
 	if(delay) msleep(ms_delay);
 	return count;
 }
 
 int unlockFile(const char* pathname) {
 	int ret, retval;
-	request_t * rts;
-	rts = initRequest(UNLOCK_FILE, pathname, 0);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	retval = sendRequest(UNLOCK_FILE, pathname, 0, connfd);
+   if(retval<0){
+   	print_err("unlock file", retval);
+   	return -1;
+   } 
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
-	free(rts);
+	if(retval<0){
+   	print_err("unlock file", retval);
+   	if(delay) msleep(ms_delay);
+   	return -1;
+   } 
 	if(delay) msleep(ms_delay);
-	return retval;
+	return 0;
 }
 
 int lockFile(const char* pathname) {
 	int ret, retval;
-	request_t * rts;
-	rts = initRequest(LOCK_FILE, pathname, 0);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	retval = sendRequest(LOCK_FILE, pathname, 0, connfd);
+   if(retval<0){
+   	print_err("lock file", retval);
+   	return -1;
+   } 
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
-	free(rts);
+	if(retval<0){
+   	print_err("lock file", retval);
+   	if(delay) msleep(ms_delay);
+   	return -1;
+   } 
 	if(delay) msleep(ms_delay);
-	return retval;
+	return 0;
 }
 
 int removeFile(const char* pathname) {
 	int ret, retval;
-	request_t * rts;
-	rts = initRequest(REMOVE_FILE, pathname, 0);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	retval = sendRequest(REMOVE_FILE, pathname, 0, connfd);
+   if(retval<0){
+   	print_err("remove file", retval);
+   	return -1;
+   } 
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
-	free(rts);
+	if(retval<0){
+   	print_err("remove file", retval);
+   	if(delay) msleep(ms_delay);
+   	return -1;
+   } 
 	if(delay) msleep(ms_delay);
-	return retval;
+	return 0;
 }
 
 int closeFile(const char* pathname){
 	int ret, retval;
-	request_t * rts;
-	rts = initRequest(CLOSE_FILE, pathname, 0);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
+	retval = sendRequest(CLOSE_FILE, pathname, 0, connfd);
+   if(retval<0){
+   	print_err("close file", retval);
+   	return -1;
+   } 
 	SYSCALL_RETURN("read", ret, read(connfd, &retval, sizeof(int)), "inviando dati al server", "");
-	free(rts);
+	if(retval<0){
+   	print_err("close file", retval);
+   	if(delay) msleep(ms_delay);
+   	return -1;
+   } 
 	if(delay) msleep(ms_delay);
-	return retval;
+	return 0;
 }
 
 //API aggiuntiva, salva localmente nella cartella dirname un file con il contenuto puntato dal buffer
@@ -440,7 +507,6 @@ int saveFile(const char* dirname, const char* pathname, void* buf, size_t size) 
 		}
 		sprintf(filepath, "%s/%s", dirname, pathname);
 	}
-
 	//creo un nuovo file all'interno della directory
 	FILE *fp;
 	if((fp = fopen(filepath, "w+")) == NULL) {
@@ -460,8 +526,8 @@ int saveFile(const char* dirname, const char* pathname, void* buf, size_t size) 
 
 int setDelay(long msec) {
 	ms_delay = msec;
-    delay = 1;
-    return 0;
+   delay = 1;
+   return 0;
 }
 
 /*
@@ -483,3 +549,60 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
 	return retval;
 }*/
+
+
+/* TO DO:
+	-append
+	-initRequest ingloba l'invio e il check per busy -> nella initRequest c'e' ancora l'error handling vecchio.
+*/
+
+void print_err(char * str, int err) {
+	switch(err){
+		case err_server_busy:
+			fprintf(stderr, "[ERR]%s: server occupato, riprovare...\n", str);
+			/*forzatura per momenti atipici di sovraccarico (stress test), soluzioni
+			  meno brutali come un try again con timeout ancora non implementate */
+			exit(EXIT_FAILURE);
+			break;
+		case err_worker_busy:
+			fprintf(stderr, "[ERR]%s: worker occupati, operazione annullata\n", str);
+			/*forzatura per momenti atipici di sovraccarico (stress test), soluzioni
+			  meno brutali come un try again con timeout ancora non implementate 
+			exit(EXIT_FAILURE); */
+			break;
+		case err_memory_alloc: 
+			fprintf(stderr, "[ERR] %s: memory allocation\n", str);
+			break;
+		case err_storage_fault:
+			fprintf(stderr, "[ERR] %s: errore gestione interna storage\n", str);
+			break;
+		case err_file_exist:
+			fprintf(stderr, "[ERR] %s: file gia' presente in memoria\n", str);
+			break;
+		case err_file_notexist:
+			fprintf(stderr, "[ERR] %s: file non esiste in memoria\n", str);
+			break;
+		case err_file_locked:
+			fprintf(stderr, "[ERR] %s: file lockato da un altro utente\n", str);
+			break;
+		case err_file_notlocked:
+			fprintf(stderr, "[ERR] %s: file non lockato\n", str);
+			break;
+		case err_file_notopen:
+			fprintf(stderr, "[ERR] %s: file non aperto\n", str);
+			break;
+		case err_file_toobig:
+			fprintf(stderr, "[ERR] %s: file troppo grande\n", str);
+			break;
+		case err_path_invalid:
+			fprintf(stderr, "[ERR] %s: indirizzo file non valido\n", str);
+			break;
+		case err_args_invalid:
+			fprintf(stderr, "[ERR] %s: valori input invalidi\n", str);
+			break;
+
+		default: 
+			fprintf(stderr, "[ERR] %s: errore server (solitamente macro)\n", str);
+			break;
+	}
+}

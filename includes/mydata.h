@@ -31,6 +31,22 @@ extern int quiet;
 extern FILE *logfd;
 extern pthread_mutex_t logmtx;
 
+enum {
+    err_args_invalid    = -14,
+    err_path_invalid    = -13,
+    
+    err_worker_busy     = -11,
+    err_server_busy     = -10,
+    err_memory_alloc    = -9,
+    err_storage_fault   = -8,
+    err_file_exist      = -7,
+    err_file_notexist   = -6,
+    err_file_locked     = -5,
+    err_file_notlocked  = -4,
+    err_file_notopen    = -3,
+    err_file_toobig     = -2        
+    
+};
 
 //usata all'avvio del server per salvare i valori di configurazione
 typedef struct {

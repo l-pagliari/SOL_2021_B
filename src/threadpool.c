@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <util.h>
 #include <threadpool.h>
+#include <signal.h>
 
 /**
  * @function void *threadpool_thread(void *threadpool)
@@ -52,6 +53,14 @@ static void *workerpool_thread(void *threadpool) {
 
 	pool->taskonthefly++;
         UNLOCK_RETURN(&(pool->lock), NULL);
+
+    struct sigaction s;
+    memset(&s,0,sizeof(s));    
+    s.sa_handler=SIG_IGN;
+    if((sigaction(SIGPIPE,&s,NULL)) == -1 ) { 
+        perror("sigaction"); 
+        exit(EXIT_FAILURE); 
+    } 
 
         // eseguo la funzione 
         (*(task.fun))(task.arg);

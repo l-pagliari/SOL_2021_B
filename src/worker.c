@@ -42,15 +42,21 @@ void workerF(void *arg) {
 	int r;
 	char * keyptr = NULL;
  
-		req = malloc(sizeof(request_t));
-		if(req == NULL) {
-			fprintf(stderr, "errore malloc request\n");
-			return;
-		}
-		if(readn(connfd, req, sizeof(request_t)) == -1) {
-			fprintf(stderr, "errore lettura richiesta client\n");
-			return;
-		}
+	req = malloc(sizeof(request_t));
+	if(req == NULL) {
+		perror("malloc");
+		fprintf(stderr, "errore malloc request\n");
+		return;
+	}
+	if(readn(connfd, req, sizeof(request_t)) == -1) {
+		fprintf(stderr, "errore lettura richiesta client\n");
+		return;
+	}
+	int busy = 0;
+	if(writen(connfd, &busy, sizeof(int)) == -1) {
+		fprintf(stderr, "errore invio richiesta client\n");
+		return;
+	}
 
 		switch(req->type){
 			
@@ -110,7 +116,7 @@ void workerF(void *arg) {
     	case READ_FILE:
     		r = handler_readfile(connfd, req);
     		//in questo caso comunico col client solo in caso di errore
-    		if(r == -1) {
+    		if(r < 0) {
     			if(write(connfd, &r, sizeof(int)) == -1) {
 						fprintf(stderr, "errore inviando dati al client\n");
 					}
@@ -123,7 +129,7 @@ void workerF(void *arg) {
     	case READ_N_FILES:
     		r = handler_read_n_files(connfd, req);
     		//in questo caso comunico col client solo in caso di errore
-    		if(r == -1) {
+    		if(r < 0) {
     			if(write(connfd, &r, sizeof(int)) == -1) {
 						fprintf(stderr, "errore inviando dati al client\n");
 					}
@@ -184,21 +190,21 @@ int handler_openfile(long fd, request_t * req) {
 	char *key = (char*)malloc(PATH_MAX*sizeof(char));
 	if(key == NULL) {
 		fprintf(stderr, "malloc key\n");
-		return -1;
+		return err_memory_alloc;
 	}
 	strncpy(key, req->filepath, PATH_MAX);
 
 	if(flag == O_CREATE || flag == (O_CREATE|O_LOCK)) {	
 		//controllo che il file non esista gia'
 		if(icl_hash_find(table, key) != NULL) {
-			fprintf(stderr, "[SERVER] Impossibile creare il file, esiste gia' in memoria\n");
-			return -1;
+			//fprintf(stderr, "[SERVER] Impossibile creare il file, esiste gia' in memoria\n");
+			return err_file_exist;
 		}
 		//inizializzo il nuovo file privo di contenuto
 		data = malloc(sizeof(file_t));
 		if(data == NULL) {
 			perror("malloc file_t");
-			return -1;
+			return err_memory_alloc;
 		}
 		data->contenuto = NULL;
 		data->file_size = 0;
@@ -208,6 +214,10 @@ int handler_openfile(long fd, request_t * req) {
 		char *bname = basename(tmp_str);
 		size_t len = strlen(bname);
 		data->file_name = (char*)malloc(BUFSIZE*sizeof(char));
+		if(data->file_name == NULL) {
+			perror("malloc file_name");
+			return err_memory_alloc;
+		}
 		strncpy(data->file_name, bname, BUFSIZE);
 		data->file_name[len] = '\0';
 		free(tmp_str);
@@ -227,7 +237,7 @@ int handler_openfile(long fd, request_t * req) {
 		if(icl_hash_insert(table, key, data) == NULL) {
 			fprintf(stderr, "errore inserimento in memoria di %s\n", key);
 			UNLOCK_RETURN(&(table->lock), -1);
-			return -1;
+			return err_storage_fault;
 		}
 		UNLOCK_RETURN(&(table->lock), -1);
 		//scrivo l'esito delle operazioni sul log
@@ -249,12 +259,12 @@ int handler_openfile(long fd, request_t * req) {
 		//controllo che il file esista e sia sbloccato
 		data = icl_hash_find(table, key);
 		if(data == NULL) {
-			fprintf(stderr, "[SERVER] Errore: file non presente in memoria\n");
-			return -1;
+			//fprintf(stderr, "[SERVER] Errore: file non presente in memoria\n");
+			return err_file_notexist;
 		}
 		if(data->lock_flag == 1) {
-			fprintf(stderr, "[SERVER] Errore: file gia' lockato\n");
-			return -1;
+			//fprintf(stderr, "[SERVER] Errore: file gia' lockato\n");
+			return err_file_locked;
 		}
 		//modifico il flag del file
 		int limitcase = 0;	//caso in cui il file sia stato lockato nel frattempo
@@ -266,14 +276,15 @@ int handler_openfile(long fd, request_t * req) {
 		} else limitcase = 1;
 		UNLOCK_RETURN(&(table->lock), -1);
 		if(limitcase == 1) {
-			fprintf(stderr, "[SERVER] Errore: file gia' lockato\n");
-			return -1;
+			//fprintf(stderr, "[SERVER] Errore: file gia' lockato\n");
+			return err_file_locked;
 		}
 		LOCK_RETURN(&logmtx, -1);
 		fprintf(logfd, "%s[LOG] Open-Locked existing file %s\n", tStamp(timestr), key);
 		UNLOCK_RETURN(&logmtx, -1);
 		//devo ricordarmi da qualche parte che il file identificato da key e' stato lockato da id
 		cleanuplist_ins(id, key);
+		
 		free(key);
 	}
 	/* nella mia implementazione non ho trovato un uso particolare di open file senza flag, ho
@@ -281,8 +292,8 @@ int handler_openfile(long fd, request_t * req) {
 	else { 
 		data = icl_hash_find(table, key);
 		if(data == NULL) {
-			fprintf(stderr, "[SERVER] Errore: file non presente in memoria\n");
-			return -1;
+			//fprintf(stderr, "[SERVER] Errore: file non presente in memoria\n");
+			return err_file_notexist;
 		}
 		LOCK_RETURN(&(table->lock), -1);
 		data->open_flag = 1;
@@ -304,7 +315,7 @@ int handler_closefile(long fd, request_t * req) {
 	data = icl_hash_find(table, key);
 	if(data == NULL) {
 		fprintf(stderr, "[SERVER] Errore: file da chiudere non trovato\n");
-		return -1;
+		return err_file_notexist;
 	}
 	//se il file da chiudere e' gia' chiuso, non lo considero un errore
 	if(data->open_flag == 0) return 0;
@@ -329,16 +340,16 @@ int handler_writefile(long fd, request_t * req) {
 	//controllo che il file sia presente in memoria, aperto e locked
 	data = icl_hash_find(table, key);
 	if(data == NULL){
-		fprintf(stderr, "[SERVER] Errore: file perso\n");
-		return -1;
+		//fprintf(stderr, "[SERVER] Errore: file perso\n");
+		return err_storage_fault;
 	}
 	if(data->open_flag != 1) {
-		fprintf(stderr, "[SERVER] Errore: file non aperto\n");
-		return -1;
+		//fprintf(stderr, "[SERVER] Errore: file non aperto\n");
+		return err_file_notopen;
 	}
 	if(data->lock_flag != 1 || data->locked_by != req->cid ){
-		fprintf(stderr, "[SERVER] Errore: file non lockato\n");
-		return -1;
+		//fprintf(stderr, "[SERVER] Errore: file non lockato\n");
+		return err_file_notlocked;
 	}
 	//comunico al client che puo' inviare il file
 	SYSCALL_RETURN("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
@@ -348,13 +359,13 @@ int handler_writefile(long fd, request_t * req) {
 	buf = malloc(fsize);
 	if(buf == NULL) {
 		perror("malloc buffer");
-		return -1;
+		return err_memory_alloc;
 	}
 	SYSCALL_RETURN("read", ret, readn(fd, buf, fsize), "leggendo dati dal client", "");
 
 	//Controllo memoria
 	if(fsize > MAX_CAP) {
-		fprintf(stderr, "[SERVER] Errore: file troppo grande\n");
+		//fprintf(stderr, "[SERVER] Errore: file troppo grande\n");
 		/* Non e' specificata la gestione di questo specifico caso: il client tenta di scrivere un file
 		   piu' grande della capacita' massima del server. Siccome la specifica chiede che le scritture avvengano
 		   solo in append, in seguito di questo errore rimane nel server un file "guscio" privo di contenuto; 
@@ -363,7 +374,7 @@ int handler_writefile(long fd, request_t * req) {
 		   Non creando problemi ho deciso di lasciarlo nel server e dare la scelta all'utente
 		
 			icl_hash_delete(table, key, &free, &freeFile); */
-		return -1;
+		return err_file_toobig;
 	}
 	//aggiorno i valori globali di storage
 	LOCK_RETURN(&storemtx, -1);
@@ -375,7 +386,7 @@ int handler_writefile(long fd, request_t * req) {
 			 nello storage, invia al client il primo file inserito (politica fifo). Ripeto questo processo finche'
 			 non si libera abbastanza spazio per salvare il nuovo file. */
 		retval = rimpiazzamento_fifo(fd); 
-		if(retval == -1) break;
+		if(retval < 0) break;
 		num_capacity_miss++;
 	}
 	//aggiorno i valori globali di storage dopo il possibile caso di capacity miss
@@ -390,7 +401,7 @@ int handler_writefile(long fd, request_t * req) {
 	data->contenuto = malloc(fsize);
 	if(data->contenuto == NULL) {
 		perror("malloc contenuto file");
-		return -1;
+		return err_memory_alloc;
 	}
 	memcpy(data->contenuto, buf, fsize);
 	data->file_size = fsize;
@@ -412,7 +423,7 @@ int handler_readfile(long fd, request_t * req) {
 	data = icl_hash_find(table, key);
 	if(data == NULL) {
 		fprintf(stderr, "[SERVER] Errore: il file non e' presente in memoria\n");
-		return -1;
+		return err_file_notexist;
 	}
 	LOCK_RETURN(&(table->lock), -1);
 	//comunico al client che l'ho trovato
@@ -480,7 +491,7 @@ int rimpiazzamento_fifo(long fd) {
 		LOCK_RETURN(&(table->lock), -1);
 		r = icl_hash_delete(table, key, &free, &freeFile);
 		UNLOCK_RETURN(&(table->lock), -1);
-		if(r == -1) return -1;
+		if(r == -1) return err_storage_fault;
 		
 		LOCK_RETURN(&logmtx, -1);
 		fprintf(logfd, "%s[LOG] CAPACITY MISS: Removed file %s (%ld Bytes)\n", tStamp(timestr), key, size);
@@ -503,7 +514,7 @@ int handler_read_n_files(long fd, request_t * req) {
 	/*il client mi chiede di leggere al piu' N file casuali dal server,
 		sfrutto il fatto che conosco a priori il numero di file salvati */
 
-	if(table->nentries == 0) 	return -1;//caso limite
+	if(table->nentries == 0) 	return err_file_notexist; //caso limite
 		
 	/*due casi possibili:
 		1. N==0 o N>=entries --> devo leggere tutti i file contenuti in memoria
@@ -513,8 +524,8 @@ int handler_read_n_files(long fd, request_t * req) {
 	//alloco l'array di puntatori a file
 	file_array = malloc(num*sizeof(void*));
 	if(file_array == NULL) {
-		perror("malloc");
-		return -1;
+		//perror("malloc");
+		return err_memory_alloc;
 	}
 	//inzializzo a null i pointers
 	for(i=0; i<num; i++) file_array[i] = NULL;
@@ -522,9 +533,9 @@ int handler_read_n_files(long fd, request_t * req) {
 	LOCK_RETURN(&(table->lock), -1);
 	if(get_n_entries(table, num, file_array) == -1) {
 		UNLOCK_RETURN(&(table->lock), -1);
-		fprintf(stderr, "errore nella funzione get_n_entries\n");
 		free(file_array);
-		return -1;
+		//fprintf(stderr, "errore nella funzione get_n_entries\n");
+		return err_storage_fault;
 	}
 	UNLOCK_RETURN(&(table->lock), -1);
 
@@ -573,8 +584,8 @@ int handler_lockfile(long fd, request_t * req) {
 
 	data = icl_hash_find(table, key);
 	if(data == NULL) {
-		printf("[SERVER] file non trovato\n");
-		return -1;
+		//printf("[SERVER] file non trovato\n");
+		return err_file_notexist;
 	}
 	//caso 1: il file era stato aperto/creato con il flag O_LOCK e larichiesta proviene dallo stesso processo
 	if(data->lock_flag == 1 && data->open_flag == 1 && data->locked_by == id ) {
@@ -589,12 +600,11 @@ int handler_lockfile(long fd, request_t * req) {
 			data->locked_by = id;
 		} else check = 0;
 		UNLOCK_RETURN(&(table->lock), -1);
-		if(check == 0) return -1;
+		if(check == 0) return err_file_locked;
 		
 		LOCK_RETURN(&logmtx, -1);
 		fprintf(logfd, "%s[LOG] Locked file %s\n", tStamp(timestr), (char*)key);
 		UNLOCK_RETURN(&logmtx, -1);
-
 		//devo ricordarmi che il file identificato da key e' stato lockato da id
 		cleanuplist_ins(id, key);
 		return 0;
@@ -626,8 +636,8 @@ int handler_unlockfile(long fd, request_t * req) {
 	
 	data = icl_hash_find(table, key);
 	if(data == NULL) {
-		printf("[SERVER] file non trovato\n");
-		return -1;
+		//printf("[SERVER] file non trovato\n");
+		return err_file_notexist;
 	}
 
 	/*L’operazione ha successo solo se l’owner della lock è il processo che ha richiesto l’operazione
@@ -646,8 +656,8 @@ int handler_unlockfile(long fd, request_t * req) {
 		cleanuplist_del(key);
 	}
 	else {
-		fprintf(stderr, "[SERVER] errore unlock: file lockato da un altro client\n");
-		return -1;
+		//fprintf(stderr, "[SERVER] errore unlock: file lockato da un altro client\n");
+		return err_file_locked;
 	}
 	return 0;
 }
@@ -662,8 +672,8 @@ int handler_removefile(long fd, request_t * req) {
 
 	data = icl_hash_find(table, key);
 	if(data == NULL) {
-		printf("[SERVER] file non trovato\n");
-		return -1;
+		//printf("[SERVER] file non trovato\n");
+		return err_file_notexist;
 	}
 	if(data->lock_flag == 1 && data->locked_by == id) {
 		//prima di eliminare il file devo salvare size
@@ -677,8 +687,8 @@ int handler_removefile(long fd, request_t * req) {
 		r = icl_hash_delete(table, key, &free, &freeFile);
 		UNLOCK_RETURN(&(table->lock), -1);
 		if(r == -1) {
-			fprintf(stderr, "[SERVER] Errore delete\n");
-			return -1;
+			//fprintf(stderr, "[SERVER] Errore delete\n");
+			return err_storage_fault;
 		}
 		//aggiorno le informazioni sulla memoria occupata
 		LOCK_RETURN(&storemtx, -1);
@@ -693,12 +703,10 @@ int handler_removefile(long fd, request_t * req) {
 		return 0;
 	}
 	//fprintf(stderr, "[SERVER] Errore remove: lock non posseduta\n");
-	return -1;
+	return err_file_notlocked;
 }
 
 
 /* TO DO:
--trasformare gli errori printati dal server su stdout in errorcode da mandare al client
- che poi stampera' con una funzione apposita
  -append per completezza
 */

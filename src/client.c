@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <limits.h>
 #include <errno.h>
+#include <signal.h>
 
 #include <util.h>
 #include <mydata.h>
@@ -40,7 +41,6 @@ int main(int argc, char *argv[]) {
     char *token, *save, *token2;
     size_t fsize;
     void *memptr = NULL;
-	char *endptr;
     long val;
     char *read_dir = NULL;
     char *write_dir = NULL;
@@ -49,8 +49,16 @@ int main(int argc, char *argv[]) {
     
     //char *append_buf;
     //size_t append_len;
-    
-	while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:pa:")) != -1) {
+
+    struct sigaction s;
+    memset(&s,0,sizeof(s));    
+    s.sa_handler=SIG_IGN;
+    if((sigaction(SIGPIPE,&s,NULL)) == -1 ) { 
+    	perror("sigaction"); 
+    	exit(EXIT_FAILURE); 
+    } 
+
+    while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:pa:")) != -1) {
     	switch(opt) {
 			
 			case 'h': 
@@ -61,7 +69,7 @@ int main(int argc, char *argv[]) {
 			case 'p':
     			if(!quiet) {
     				fprintf(stderr, "input errato, usare -h per aiuto\n");
-               		exit(EXIT_FAILURE);
+               		break;
     			}
     			quiet = 0;
     			break;	
@@ -69,7 +77,7 @@ int main(int argc, char *argv[]) {
 			case 'f':
 				if(connection_established == 1) {
 					fprintf(stderr, "input errato, usare -h per aiuto\n");
-					exit(EXIT_FAILURE);
+					break;
 				}
 				if((sockname = malloc(BUFSIZE*sizeof(char))) == NULL ) {
 					perror("malloc");
@@ -81,10 +89,9 @@ int main(int argc, char *argv[]) {
 				timeout.tv_sec = MAX_WAIT_TIME_SEC;
 				int retry = RETRY_TIME_MS;
 				
-				if((r = openConnection(sockname, retry, timeout)) == -1) { //API
-					perror("openConnection");
+				r = openConnection(sockname, retry, timeout); 
+				if(r == -1) 
 					exit(EXIT_FAILURE);
-				}
 				if(!quiet) printf("[CLIENT] Aperta connessione con il server \n");
 				connection_established = 1;
 				break;
@@ -98,11 +105,8 @@ int main(int argc, char *argv[]) {
 				do{
 					r = openFile(token, O_CREATE|O_LOCK);
 					if(r == 0) {
-						r = writeFile(token, write_dir);
-						if(r == -1) printf("[CLIENT] Errore nella scrittura del file\n");
-						//else if(!quiet) printf("[CLIENT] Scritto il file %s sul server\n", token);
-						r = closeFile(token);
-						if(r == -1) printf("[CLIENT] Errore nella chiusura del file\n");
+						writeFile(token, write_dir);
+						closeFile(token);
 					}
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
@@ -119,14 +123,10 @@ int main(int argc, char *argv[]) {
 					if(r == 0)
 						r = readFile(token, &memptr, &fsize);
 					if(r == 0) {
-						if(!quiet) printf("[CLIENT] Letto il file %s (%ld MB)\n", token, fsize/1024/1024);
-						if(read_dir) r = saveFile(read_dir, token, memptr, fsize);
+						if(!quiet) fprintf(stdout, "[CLIENT] Letto il file %s (%ld MB)\n", token, fsize/1024/1024);
+						if(read_dir) saveFile(read_dir, token, memptr, fsize);
 						if(memptr) free(memptr);
-						/*if(r == 0) {
-							if(!quiet) printf("[CLIENT] Salvato il file %s nella directory %s\n", token, read_dir);
-						}*/
-						r = closeFile(token);
-						if(r == -1) printf("[CLIENT] Errore nella chiusura del file\n");
+						closeFile(token);
 					}
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);	
@@ -139,7 +139,7 @@ int main(int argc, char *argv[]) {
 				r = makeDir(optarg, rdpath);
 				if(r == -1) {
 					fprintf(stderr, "input errato, usare -h per aiuto\n");
-					exit(EXIT_FAILURE);
+					break;
 				}
 				read_dir = rdpath;
 				if(!quiet) fprintf(stdout, "[CLIENT] File letti verranno salvati nella cartella %s\n", read_dir);
@@ -152,7 +152,7 @@ int main(int argc, char *argv[]) {
 				r = makeDir(optarg, wrpath);
 				if(r == -1) {
 					fprintf(stderr, "input errato, usare -h per aiuto\n");
-					exit(EXIT_FAILURE);
+					break;
 				}
 				write_dir = wrpath;
 				if(!quiet) fprintf(stdout, "[CLIENT] File espulsi verranno salvati nella cartella %s\n", write_dir);
@@ -167,23 +167,12 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				token2 = strtok_r(NULL, ",", &save);
 				if(token2 == NULL) writeDirectory(token, 0, write_dir);
-				else if(strlen(token2) > 2) {
-					//estraggo il valore numerico usando strtol
-					errno = 0;
-					val = strtol(optarg+2, &endptr, 10);
-					if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
-               			perror("strtol");
-               			exit(EXIT_FAILURE);
-           			}
-					if (endptr == optarg+2 || val < 0) {
-               			fprintf(stderr, "input errato, usare -h per aiuto\n");
-               			exit(EXIT_FAILURE);
-           			}
-					writeDirectory(token, (int)val, write_dir);
+				else if((strlen(token2) > 2) && (isNumber(token2+2, &val) == 0) && (val>=0)) {
+					writeDirectory(token, val, write_dir);
 				}
 				else {
 					fprintf(stderr, "input errato, usare -h per aiuto\n");
-               		exit(EXIT_FAILURE);
+               		break;
                	}
 				break;
 
@@ -192,23 +181,14 @@ int main(int argc, char *argv[]) {
 					fprintf(stderr, "connesione non stabilita\n");
 					exit(EXIT_FAILURE);
 				}
-				//input nella forma n=7, faccio un controllo sull'input utilizzando strtol
-				errno = 0;
-				val = strtol(optarg+2, &endptr, 10);
-				if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
-               		perror("strtol");
-               		exit(EXIT_FAILURE);
-           		}
-				if (endptr == optarg+2 || val < 0) {
-               		fprintf(stderr, "input errato, usare -h per aiuto\n");
-               		exit(EXIT_FAILURE);
-           		}
-				//il cast non dovrebbe causare problemi, in caso si puo' usare atoi con un altro controllo errori
-				r = readNFiles((int)val, read_dir);
-				/*if(!quiet && r > 0) {
-					if(read_dir == NULL) printf("[CLIENT] Letti %d file diversi dal server\n", r);
-					else printf("[CLIENT] Letti %d file diversi dal server e salvati nella directory %s\n", r, read_dir);
-				}*/
+				//input nella forma n=7
+				if(isNumber(optarg+2, &val) == 0 && val >= 0) {
+					readNFiles(val, read_dir);
+				}
+				else {
+					fprintf(stderr, "input errato, usare -h per aiuto\n");
+					break;
+               	}	
 				break;
 
 			case 'l':
@@ -219,7 +199,6 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					r = lockFile(token);
-					if(r == -1) printf("[CLIENT] Errore lock\n");
 					if(!quiet && r==0) printf("[CLIENT] Lockato il file %s\n", token);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
@@ -233,7 +212,6 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					r = unlockFile(token);
-					if(r == -1) printf("[CLIENT] Errore unlock\n");
 					if(!quiet && r==0) printf("[CLIENT] Unlockato il file %s\n", token);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
@@ -247,7 +225,6 @@ int main(int argc, char *argv[]) {
 				token = strtok_r(optarg, ",", &save);
 				do{
 					r = removeFile(token);
-					if(r == -1) printf("[CLIENT] Errore remove\n");
 					if(!quiet && r==0) printf("[CLIENT] Eliminato il file %s\n", token);
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
@@ -255,21 +232,13 @@ int main(int argc, char *argv[]) {
 
 			case 't':
 				//l'argomento e' il numero di millisecondi
-				errno = 0;
-				val = strtol(optarg, &endptr, 10);
-				if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
-               		perror("strtol");
-               		exit(EXIT_FAILURE);
-           		}
-				if (endptr == optarg || val < 0) {
-               		fprintf(stderr, "input errato, usare -h per aiuto\n");
-               		exit(EXIT_FAILURE);
-           		}
-           		setDelay(val);
-           		if(!quiet) printf("[CLIENT] Abilitato il ritardo tra le richieste di %ldmsec\n", val);
-    			break;
-
-    		/*
+				if(isNumber(optarg, &val) == 0 && val >= 0) {
+					setDelay(val);
+					if(!quiet) printf("[CLIENT] Abilitato il ritardo tra le richieste di %ldmsec\n", val);
+				}
+				else fprintf(stderr, "input errato, usare -h per aiuto\n");
+				break;
+			/*
     		case 'a':
     			if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita\n");
@@ -308,24 +277,19 @@ int main(int argc, char *argv[]) {
 						exit(EXIT_FAILURE);
 					}
 					r = readNFiles(0, read_dir);
-					if(!quiet && r > 0) {
-						if(read_dir == NULL) printf("[CLIENT] Letti %d file diversi dal server\n", r);
-						else printf("[CLIENT] Letti %d file diversi dal server e salvati nella directory %s\n", r, read_dir);
-					}
 				}
 				else {
 					fprintf(stderr,"argomento assente per %c\n", (char)optopt);
-					exit(EXIT_FAILURE);
+					break;
 				}
 				break;
 		}		
 	}
 	if(connection_established == 1) {
-   		if(closeConnection(sockname) == -1) //API
-   			perror("closeConnection"); 
-   		else if(!quiet) printf("[CLIENT] Chiusa la connessione con il server\n");
-						
-    }
+		//se ci sono errori vengono stampati dall'api, ma la connessione viene chiusa in ogni caso
+   		closeConnection(sockname);
+   		if(!quiet) printf("[CLIENT] Chiusa la connessione con il server\n");
+	}
     if(sockname) free(sockname);
     return 0;
 }
