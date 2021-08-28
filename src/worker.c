@@ -394,6 +394,8 @@ int handler_writefile(long fd, request_t * req) {
 	if(CUR_FIL > max_saved_files) max_saved_files = CUR_FIL;
 	if(CUR_CAP > max_reached_memory) max_reached_memory = CUR_CAP;
 	UNLOCK_RETURN(&storemtx, -1);
+	num_write++;
+	all_write+=fsize;
 
 	//comunico al client che c'e' abbastanza spazio per scrivere il file
 	SYSCALL_RETURN("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
@@ -432,10 +434,13 @@ int handler_readfile(long fd, request_t * req) {
 	SYSCALL_RETURN("write", ret, writen(fd, &(data->file_size), sizeof(size_t)), "inviando dati al client", "");
 	SYSCALL_RETURN("write", ret, writen(fd, data->contenuto, data->file_size), "inviando dati al client", "");
 	UNLOCK_RETURN(&(table->lock), -1);
+	q_bump(replace_queue, key);
 	
 	LOCK_RETURN(&logmtx, -1);
 	fprintf(logfd, "%s[LOG] Read file %s (%d Bytes)\n", tStamp(timestr), (char*)key, (int)data->file_size);
 	UNLOCK_RETURN(&logmtx, -1);
+	num_read++;
+	all_read+=data->file_size;
 	return 0;
 } 
 
@@ -567,6 +572,8 @@ int handler_read_n_files(long fd, request_t * req) {
 		LOCK_RETURN(&logmtx, -1);
 		fprintf(logfd, "%s[LOG] Read file %s (%d Bytes)\n", tStamp(timestr), newfile->file_name, (int)newfile->file_size);
 		UNLOCK_RETURN(&logmtx, -1);
+		num_read++;
+	  all_read+=newfile->file_size;
 
 		//leggo un byte per sapere che il client ha ricevuto il file
 		SYSCALL_RETURN("read", unused, read(fd, &synch, 1), "leggendo dati dal client", "");

@@ -238,33 +238,7 @@ int main(int argc, char *argv[]) {
 				}
 				else fprintf(stderr, "input errato, usare -h per aiuto\n");
 				break;
-			/*
-    		case 'a':
-    			if(connection_established == 0) {
-					fprintf(stderr, "connesione non stabilita\n");
-					exit(EXIT_FAILURE);
-				}
-				token = strtok_r(optarg, ",", &save);
-				token2 = strtok_r(NULL, ",", &save);
-				if(token2 == NULL) {
-					fprintf(stderr, "input errato, usare -h per aiuto\n");
-               		exit(EXIT_FAILURE);
-				}
-				append_len = strlen(token2)+1;
-				append_buf = malloc(append_len);
-				if(append_buf == NULL) {
-					perror("malloc");
-					exit(EXIT_FAILURE);
-				}
-				strncpy(append_buf, token2, append_len);
-				//prima dell'append faccio una openfile con O_LOCK
-				r = openFile(token, O_LOCK);
-				if(r != -1){
-					r = appendToFile(token, append_buf, append_len, write_dir);
-					if(r == -1) fprintf(stderr, "errore append\n");
-				}
-				break; */
-
+				
 			//getopt error handling manuale per gestire gli argomenti opzionali
 			case '?': 
 				fprintf(stderr, "comando non riconosciuto: %c\n", (char)optopt);

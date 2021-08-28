@@ -29,41 +29,12 @@ int delay = 0;
 
 int quiet;
 
-/* inizializzo la richiesta da mandare al server sottoforma di una struct, uguale
-   per ogni richiesta */
-request_t * initRequest(int t, const char * fname, int n){
-	request_t * req = NULL;
-	if((req = malloc(sizeof(request_t))) == NULL) {
-		perror("malloc");
-		return NULL;
-	}
-	req->type = t;
-	/*utilizzo il pid come identificativo del client, ci sono altri modi se non 
-	  sufficiente ma per gli scopi del progetto lo ritengo un buon compromesso */
-	req->cid = getpid();
-	req->arg = n;
-	if(fname != NULL){
-		/* ricavo il path assoluto del file che viene usato come chiave unica per identificare
-		   il file nel server */
-		char abs_path[PATH_MAX];
-		char *ptr = NULL;
-		if((ptr = realpath(fname, abs_path)) == NULL) {
-			fprintf(stderr, "%s non esiste\n", fname);
-			errno = EINVAL;
-			return NULL;
-		}
-		strncpy(req->filepath, abs_path, PATH_MAX);
-	} else memset(req->filepath, '\0', PATH_MAX); //valgrind
-	return req;
-}
-
 void print_err(char * str, int err);
 
 /* inizializzo la richiesta da mandare al server sottoforma di una struct, uguale
    per ogni richiesta */
-
 int sendRequest(int type, const char * filename, int flag, long fd){
-	int ret, r;
+	int ret;
 	request_t * req = NULL;
 	if((req = malloc(sizeof(request_t))) == NULL) {
 		//perror("malloc");
@@ -88,12 +59,11 @@ int sendRequest(int type, const char * filename, int flag, long fd){
 	//invio la richiesta al server 
 	SYSCALL_EXIT("write", ret, writen(fd, req, sizeof(request_t)), "inviando dati al server", "");
 	//controllo server busy
+	int r;	
    SYSCALL_EXIT("read", ret, readn(fd, &r, sizeof(int)), "ricevendo dati al server", "");
 	free(req);  
-	return r;
+	return 0;
 }
-
-
 
 /* prova a connettersi al server attraverso il socket sockname, se fallisce 
    riprova ad intervalli regolari msec fino al passaggio del tempo assoluto abstime */
@@ -205,34 +175,10 @@ int writeFile(const char *pathname, const char *dirname) {
 		return -1;
 	}
 	fclose(fp);
-	//invio size e contenuto al server
-	SYSCALL_RETURN("write", ret, writen(connfd, &fsize, sizeof(size_t)), "inviando dati al server", "");
-	SYSCALL_RETURN("write", ret, writen(connfd, buffer, fsize), "inviando dati al server", "");
-	//il server mi comunica se c'e' abbastanza spazio in memoria
-	retval = 0;
-	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-	//1.retval == 0: c'e' spazio
-	//2.retval == 1: il server deve espellere uno o piu' file per fare spazio al nuovo
-	//3.retval < 0: si e' verificato un qualche tipo di errore
-	if(retval < 0) {
-		print_err("write file", retval);
-		free(buffer);
-		return -1;
-	}
-	//uso un handler per gestire i file che il server mi manda per fare spazio
-	if(retval == 1 && !quiet) fprintf(stdout, "[CLIENT] Storage pieno, uno o piu' file verra' espulso dal server\n");
-	while(retval == 1) retval = capacityMissHandler(dirname);
-	//leggo l'esito della scrittura
-	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-	if(retval < 0) {
-		print_err("write file", retval);
-		free(buffer);
-		return -1;
-	}
-	if(!quiet) 
-		fprintf(stdout, "[CLIENT] Scritto sul server il file %s (%ld MB)\n", pathname, fsize/1024/1024);
-	
+
+	appendToFile(pathname, buffer, fsize, dirname);
 	free(buffer);
+
 	if(delay) msleep(ms_delay);
 	return 0;
 }
@@ -530,31 +476,34 @@ int setDelay(long msec) {
    return 0;
 }
 
-/*
 int appendToFile(const char* pathname, void* buf, size_t size, const char* dirname) {
-
 	int ret, retval;
-	request_t * rts;
-	rts = initRequest(APPEND_FILE, pathname, 0);
-	if(rts == NULL) return -1;
-	SYSCALL_RETURN("write", ret, writen(connfd, rts, sizeof(request_t)), "inviando dati al server", "");
-
-	//invio la size ed il buffer
+	//invio size e contenuto al server
 	SYSCALL_RETURN("write", ret, writen(connfd, &size, sizeof(size_t)), "inviando dati al server", "");
 	SYSCALL_RETURN("write", ret, writen(connfd, buf, size), "inviando dati al server", "");
-	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
 
+	//il server mi comunica se c'e' abbastanza spazio in memoria
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+	//1.retval == 0: c'e' spazio
+	//2.retval == 1: il server deve espellere uno o piu' file per fare spazio al nuovo
+	//3.retval < 0: si e' verificato un qualche tipo di errore
+	if(retval < 0) {
+		print_err("append file", retval);
+		return -1;
+	}
+	//uso un handler per gestire i file che il server mi manda per fare spazio
+	if(retval == 1 && !quiet) fprintf(stdout, "[CLIENT] Storage pieno, uno o piu' file verra' espulso dal server\n");
 	while(retval == 1) retval = capacityMissHandler(dirname);
-
+	//leggo l'esito della scrittura
 	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-	return retval;
-}*/
-
-
-/* TO DO:
-	-append
-	-initRequest ingloba l'invio e il check per busy -> nella initRequest c'e' ancora l'error handling vecchio.
-*/
+	if(retval < 0) {
+		print_err("append file", retval);
+		return -1;
+	}
+	if(!quiet) 
+		fprintf(stdout, "[CLIENT] Scritto sul server il file %s (%ld MB)\n", pathname, size/1024/1024);
+	return 0;
+}
 
 void print_err(char * str, int err) {
 	switch(err){

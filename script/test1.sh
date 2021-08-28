@@ -53,5 +53,10 @@ echo ""
 echo "[SCRIPT] Termino il server con SIGHUP"
 killall -SIGHUP memcheck-amd64-linux
 
+sleep 1
+echo ""
+echo "Lancio lo script per la lettura del log prodotto dal server:"
+bash ./script/statistiche.sh
+
 
 

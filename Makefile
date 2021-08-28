@@ -53,7 +53,8 @@ $(OBJDIR)list.o: $(SRCDIR)list.c
 
 $(OBJDIR)queue.o: $(SRCDIR)queue.c
 
-$(OBJDIR)threadpool.o: $(SRCDIR)threadpool.c 
+$(OBJDIR)threadpool.o: $(SRCDIR)threadpool.c
+#$(OBJDIR)thpool.o: $(SRCDIR)thpool.c 
 
 $(OBJDIR)icl_hash.o: $(SRCDIR)icl_hash.c
 

@@ -23,6 +23,8 @@ void q_pull(queue_t *q, char *key);
 
 void q_remove(queue_t *q, char *key);
 
+void q_bump(queue_t *q, char *key);
+
 void freeQueue(queue_t *q);
 
 int isEmpty(queue_t *q);

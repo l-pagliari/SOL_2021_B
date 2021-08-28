@@ -95,6 +95,46 @@ void q_remove(queue_t *q, char *key) {
 	}
 }
 
+//metto in fondo alla fila il nodo identificato da key
+void q_bump(queue_t *q, char *key) {
+	//caso limite
+	if(isEmpty(q)) return;
+
+	node_t *curr;
+	node_t *prev;
+	//se il nodo e' gia l'ultimo ho finito
+	if(strcmp(q->tail->tkey, key) == 0) {
+		return;
+	}
+	//se il nodo e' gia l'ultimo ho finito
+	if(strcmp(q->head->tkey, key) == 0) {
+		LOCK(&q->qlock);
+		curr = q->head;
+		q->head = curr->next;
+		curr->next = NULL;
+		q->tail->next = curr;
+		q->tail = curr;
+		UNLOCK(&q->qlock);
+		return;
+	}
+	prev = q->head;
+	curr = q->head->next;
+	//scorro la coda per trovare il valore richiesto
+	while(curr != NULL && strcmp(curr->tkey, key) != 0){
+		prev = curr;
+		curr = curr->next;
+	}
+	//se l'ho trovato, lo metto in fondo
+	if(curr != NULL) {
+		LOCK(&q->qlock);
+		prev->next = curr->next;
+		curr->next = NULL;
+		q->tail->next = curr;
+		q->tail = curr;
+		UNLOCK(&q->qlock);
+	}
+}
+
 void freeQueue(queue_t *q) {
 	if(isEmpty(q)) {
 		pthread_mutex_destroy(&q->qlock);

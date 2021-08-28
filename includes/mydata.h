@@ -15,6 +15,11 @@ extern long max_saved_files;
 extern long max_reached_memory;
 extern long num_capacity_miss;
 
+extern long num_read;
+extern long num_write; 
+extern unsigned long all_read;
+extern unsigned long all_write;
+
 extern pthread_mutex_t storemtx;
 
 extern queue_t * replace_queue;

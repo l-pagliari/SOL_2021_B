@@ -19,6 +19,8 @@
 #include <threadpool.h>	
 #include <icl_hash.h>
 
+#include <thpool.h>
+
 #ifndef CONFIG_PATH
 #define CONFIG_PATH "misc/default_config.txt"
 #endif
@@ -44,6 +46,12 @@ long max_reached_memory = 0;
 long num_capacity_miss = 0;
 pthread_mutex_t storemtx = PTHREAD_MUTEX_INITIALIZER;
 int max_clients = 0;
+
+long num_read = 0;
+long num_write = 0; 
+unsigned long all_read = 0;
+unsigned long all_write = 0;
+
 
 //usata per il timestamp nel file di log
 char timestr[11];
@@ -86,7 +94,7 @@ static void *sigHandler(void *arg) {
     }
     return NULL;	   
 }
-void busy_handler(long fd, int t);
+//void busy_handler(long fd, int t);
 
 int main(int argc, char* argv[]) {
 
@@ -169,13 +177,23 @@ int main(int argc, char* argv[]) {
     	unlink(config->sock_name);
 		free_config(config);
     	exit(EXIT_FAILURE);
-    }
+    } 
+
+    /*threadpool pool = NULL;
+    pool = thpool_init(config->num_workers); 
+    if(!pool) {
+    	fprintf(stderr, "errore nella creazione del thread pool\n");
+    	unlink(config->sock_name);
+		free_config(config);
+    	exit(EXIT_FAILURE);
+    }*/
     /* creo la tabella hash utilizzata come data structure per lo storage server, il numero
        massimo di file(entry) che puo' ospitare e' fisso quindi non occorre fare resize in seguito */
     table = icl_hash_create(config->mem_files, NULL, NULL);
     if (!table) {
     	fprintf(stderr, "errore nella creazione della tabella hash\n");
     	destroyThreadPool(pool, 1);
+    	//thpool_destroy(pool);
     	unlink(config->sock_name);
     	free_config(config);
     	exit(EXIT_FAILURE);
@@ -185,7 +203,8 @@ int main(int argc, char* argv[]) {
 	replace_queue = init_queue();
 	if(!replace_queue) {
     	fprintf(stderr, "errore nella creazione della replace queue\n");
-    	destroyThreadPool(pool, 0); 
+    	destroyThreadPool(pool, 0);
+    	//thpool_destroy(pool); 
     	icl_hash_destroy(table, &free, &freeFile);
     	unlink(config->sock_name);
     	free_config(config);
@@ -194,7 +213,8 @@ int main(int argc, char* argv[]) {
    logfd = fopen(config->log_name, "w+");
    if(!logfd) {
    	fprintf(stderr, "errore nell'apertura del file di log\n");
-    	destroyThreadPool(pool, 0); 
+    	destroyThreadPool(pool, 0);
+    	//thpool_destroy(pool); 
     	icl_hash_destroy(table, &free, &freeFile);
     	unlink(config->sock_name);
     	free_config(config);
@@ -262,9 +282,10 @@ int main(int argc, char* argv[]) {
 					}
 
 					if(clients == config->num_workers) {
-						//printf("SERVER BUSY... try again\n");
+						/*printf("SERVER BUSY... try again\n");
 					 	busy_handler(connfd, err_server_busy); //chiude la connessione in maniera pulita
-					 	continue;
+					 	continue;*/
+					 	printf("server indeppato\n");
 					}
 					
 					clients++;
@@ -317,6 +338,7 @@ int main(int argc, char* argv[]) {
 				connfd = i;
 				if(fdmax == connfd) fdmax = oldmax;
 				FD_CLR(connfd, &set);
+
 				//notifico il pool che c'e' un nuovo task
 				n = addToThreadPool(pool, workerF, &connfd);
 		    	if (n==0) 
@@ -324,11 +346,16 @@ int main(int argc, char* argv[]) {
 		    	if (n<0) 
 					fprintf(stderr, "FATAL ERROR, adding to the thread pool\n");
 		  		else {
+		  			printf("pool indeppato\n");
 					//fprintf(stderr, "SERVER TOO BUSY\n");
-					busy_handler(connfd, err_worker_busy);
+					//busy_handler(connfd, err_worker_busy);
 					//per il momento la chiudo poi vedo se posso fare di meglio
 				}
-		    }
+				/*printf("mando connfd = %ld\n", connfd);
+				n = thpool_add_work(pool, (void*)workerF, (void*)connfd);
+				if(n == -1) printf("pool indeppato\n");*/
+				continue;
+			}
 			continue;
 		}//end for
 	}//end while
@@ -347,12 +374,17 @@ int main(int argc, char* argv[]) {
 	icl_hash_dump(stdout, table);
 	
 	LOCK(&logmtx);
-	fprintf(logfd, "%s[LOG] MAX CLIENTS: %d\n",tStamp(timestr), max_clients);
-	fprintf(logfd, "%s[LOG] MAX CAPACITY: %ld\n",tStamp(timestr), max_reached_memory);
-	fprintf(logfd, "%s[LOG] MAX FILES: %ld\n",tStamp(timestr), max_saved_files);
+	fprintf(logfd, "%s[LOG] MAX_CLIENTS: %d\n",tStamp(timestr), max_clients);
+	fprintf(logfd, "%s[LOG] MAX_CAPACITY: %ld\n",tStamp(timestr), max_reached_memory);
+	fprintf(logfd, "%s[LOG] MAX_FILES: %ld\n",tStamp(timestr), max_saved_files);
+	if(num_write)
+		fprintf(logfd, "%s[LOG] AVG_WRITE_SIZE(BYTES): %lu\n",tStamp(timestr), (unsigned long)all_write/num_write);
+	if(num_read)
+		fprintf(logfd, "%s[LOG] AVG_READ_SIZE(BYTES): %lu\n",tStamp(timestr), (unsigned long)all_read/num_read);
 	UNLOCK(&logmtx);
 
 	destroyThreadPool(pool, 0); 
+	//thpool_destroy(pool);
    icl_hash_destroy(table, &free, &freeFile);
    unlink(config->sock_name);
    free_config(config);
@@ -364,7 +396,7 @@ int main(int argc, char* argv[]) {
 }					
 
 
-void busy_handler(long fd, int t) {
+/*void busy_handler(long fd, int t) {
 
 	request_t * req;
 	int errn = t;
@@ -383,4 +415,4 @@ void busy_handler(long fd, int t) {
 	}
 	close(fd);
 	free(req);
-}
+}*/
