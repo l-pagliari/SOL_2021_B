@@ -27,12 +27,12 @@ char *socket_name;
 long ms_delay = 0;
 int delay = 0;
 
-int quiet;
-
-void print_err(char * str, int err);
+/* prototipo della funzione per gestire il capacity miss */
+static int capacityMissHandler(const char *dirname);
 
 /* inizializzo la richiesta da mandare al server sottoforma di una struct, uguale
-   per ogni richiesta */
+   per ogni richiesta; se il server non e' in grado di accettare la richiesta risponde
+   con un errore */
 int sendRequest(int type, const char * filename, int flag, long fd){
 	int ret;
 	request_t * req = NULL;
@@ -61,10 +61,16 @@ int sendRequest(int type, const char * filename, int flag, long fd){
 	//controllo server busy
 	int r;	
    SYSCALL_EXIT("read", ret, readn(fd, &r, sizeof(int)), "ricevendo dati al server", "");
-	free(req);  
+	free(req);
+	if(r < 0) {
+		print_err("invio richiesta", r);
+		/*forzatura per momenti atipici di sovraccarico (stress test), soluzioni
+		meno brutali come un try again con timeout ancora non implementate */
+		if(r == err_server_busy) exit(EXIT_FAILURE);
+		return -1;
+	}
 	return 0;
 }
-
 /* prova a connettersi al server attraverso il socket sockname, se fallisce 
    riprova ad intervalli regolari msec fino al passaggio del tempo assoluto abstime */
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
@@ -103,7 +109,7 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
 	if(delay) msleep(ms_delay);;
 	return 0;
 }
-
+/* chiudo la connessione con il server */
 int closeConnection(const char *sockname) {
 	if(strncmp(sockname, socket_name, BUFSIZE) != 0) {
 		//errno = EINVAL;
@@ -121,7 +127,8 @@ int closeConnection(const char *sockname) {
    }
 	return 0;
 }
-
+/* apro il file su cui fare successive operazioni; sono accettati i flag
+   O_CREATE e O_LOCK per creare un nuovo file o lockarlo, rispettivamente */
 int openFile(const char *pathname, int flags) {
 
 	int ret, retval, r;
@@ -139,7 +146,8 @@ int openFile(const char *pathname, int flags) {
 	if(delay) msleep(ms_delay);
 	return 0;
 }
-
+/* scrivo un file sul server utilizzando l'append; prima lo analizzo con stat per conoscere
+   la size da leggere */
 int writeFile(const char *pathname, const char *dirname) {
 
 	int ret, retval, r;
@@ -182,7 +190,40 @@ int writeFile(const char *pathname, const char *dirname) {
 	if(delay) msleep(ms_delay);
 	return 0;
 }
-		
+/* invio un file al server per la scrittura; in caso di capacity miss devo ricevere i
+   file espulsi per fare spazio. 
+   OSS: non e' un vero e proprio append scrivendo sempre sopra un file vuoto, non ho 
+   trovato un uso pratico dello appendere un file all'altro leggendo le richieste del progetto */
+int appendToFile(const char* pathname, void* buf, size_t size, const char* dirname) {
+	int ret, retval;
+	//invio size e contenuto al server
+	SYSCALL_RETURN("write", ret, writen(connfd, &size, sizeof(size_t)), "inviando dati al server", "");
+	SYSCALL_RETURN("write", ret, writen(connfd, buf, size), "inviando dati al server", "");
+
+	//il server mi comunica se c'e' abbastanza spazio in memoria
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+	//1.retval == 0: c'e' spazio
+	//2.retval == 1: il server deve espellere uno o piu' file per fare spazio al nuovo
+	//3.retval < 0: si e' verificato un qualche tipo di errore
+	if(retval < 0) {
+		print_err("append file", retval);
+		return -1;
+	}
+	//uso un handler per gestire i file che il server mi manda per fare spazio
+	if(retval == 1 && !quiet) fprintf(stdout, "[CLIENT] Storage pieno, uno o piu' file verra' espulso dal server\n");
+	while(retval == 1) retval = capacityMissHandler(dirname);
+	//leggo l'esito della scrittura
+	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
+	if(retval < 0) {
+		print_err("append file", retval);
+		return -1;
+	}
+	if(!quiet) 
+		fprintf(stdout, "[CLIENT] Scritto sul server il file %s (%ld MB)\n", pathname, size/1024/1024);
+	return 0;
+}
+/* gestione del caso capacity miss; i file espulsi dal server vengono letti e se
+   specificato in precendenza salvati localmente */		
 int capacityMissHandler(const char *dirname) {
 	
 	int ret, retval = 1;
@@ -219,7 +260,9 @@ int capacityMissHandler(const char *dirname) {
 	free(buf);
 	return retval;
 }
-
+/* API aggiuntiva rispetto a quelle richieste, utilizzata nel caso di scrittura ricorsiva di file
+   presenti all'interno di una directory. Visita tutti i file e directories presenti all'interno della
+   directory passata in input, fino all'invio di tutti i file o del numero specificato */
 int writeDirectory(const char *dirname, int max_files, const char *writedir) {
 	//controllo input per essere certi che e' stata passata una directory
 	struct stat statbuf;
@@ -280,7 +323,7 @@ int writeDirectory(const char *dirname, int max_files, const char *writedir) {
 	if(delay) msleep(ms_delay);
 	return 0;
 }
-
+/* leggo un file presente in memoria; se specificato lo salvo localmente */
 int readFile(const char* pathname, void** buf, size_t* size) {
 
 	int ret, retval;
@@ -307,7 +350,8 @@ int readFile(const char* pathname, void** buf, size_t* size) {
 	if(delay) msleep(ms_delay);
 	return 0;
 }
-
+/* leggo fino ad N file a caso presenti sul server e li salvo localmente in dirname; 
+	se il server ne ha meno invia tutti quelli che ha */
 int readNFiles(int N, const char* dirname) {
 	int ret, retval;
 	retval = sendRequest(READ_N_FILES, NULL, N, connfd);
@@ -359,7 +403,7 @@ int readNFiles(int N, const char* dirname) {
 	if(delay) msleep(ms_delay);
 	return count;
 }
-
+/* richiedo di sbloccare un file */
 int unlockFile(const char* pathname) {
 	int ret, retval;
 	retval = sendRequest(UNLOCK_FILE, pathname, 0, connfd);
@@ -376,7 +420,7 @@ int unlockFile(const char* pathname) {
 	if(delay) msleep(ms_delay);
 	return 0;
 }
-
+/* richiedo di bloccare un file */
 int lockFile(const char* pathname) {
 	int ret, retval;
 	retval = sendRequest(LOCK_FILE, pathname, 0, connfd);
@@ -393,7 +437,7 @@ int lockFile(const char* pathname) {
 	if(delay) msleep(ms_delay);
 	return 0;
 }
-
+/* richiedo di rimuovere un file */
 int removeFile(const char* pathname) {
 	int ret, retval;
 	retval = sendRequest(REMOVE_FILE, pathname, 0, connfd);
@@ -410,7 +454,7 @@ int removeFile(const char* pathname) {
 	if(delay) msleep(ms_delay);
 	return 0;
 }
-
+/* richiedo di chiudere un file */
 int closeFile(const char* pathname){
 	int ret, retval;
 	retval = sendRequest(CLOSE_FILE, pathname, 0, connfd);
@@ -428,7 +472,7 @@ int closeFile(const char* pathname){
 	return 0;
 }
 
-//API aggiuntiva, salva localmente nella cartella dirname un file con il contenuto puntato dal buffer
+/* API aggiuntiva, salva localmente nella cartella dirname un file con il contenuto puntato dal buffer */
 int saveFile(const char* dirname, const char* pathname, void* buf, size_t size) {
 	 //ricavo il nome da salvare da pathname, formato sconosciuto a priori
 	char *filepath;
@@ -469,55 +513,20 @@ int saveFile(const char* dirname, const char* pathname, void* buf, size_t size) 
 	if(delay) msleep(ms_delay);
 	return 0;
 }
-
-int setDelay(long msec) {
+/* modifica la variabile globlale del ritardo tra le operazioni */
+void setDelay(long msec) {
 	ms_delay = msec;
    delay = 1;
-   return 0;
 }
-
-int appendToFile(const char* pathname, void* buf, size_t size, const char* dirname) {
-	int ret, retval;
-	//invio size e contenuto al server
-	SYSCALL_RETURN("write", ret, writen(connfd, &size, sizeof(size_t)), "inviando dati al server", "");
-	SYSCALL_RETURN("write", ret, writen(connfd, buf, size), "inviando dati al server", "");
-
-	//il server mi comunica se c'e' abbastanza spazio in memoria
-	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-	//1.retval == 0: c'e' spazio
-	//2.retval == 1: il server deve espellere uno o piu' file per fare spazio al nuovo
-	//3.retval < 0: si e' verificato un qualche tipo di errore
-	if(retval < 0) {
-		print_err("append file", retval);
-		return -1;
-	}
-	//uso un handler per gestire i file che il server mi manda per fare spazio
-	if(retval == 1 && !quiet) fprintf(stdout, "[CLIENT] Storage pieno, uno o piu' file verra' espulso dal server\n");
-	while(retval == 1) retval = capacityMissHandler(dirname);
-	//leggo l'esito della scrittura
-	SYSCALL_RETURN("read", ret, readn(connfd, &retval, sizeof(int)), "ricevendo dati dal server", "");
-	if(retval < 0) {
-		print_err("append file", retval);
-		return -1;
-	}
-	if(!quiet) 
-		fprintf(stdout, "[CLIENT] Scritto sul server il file %s (%ld MB)\n", pathname, size/1024/1024);
-	return 0;
-}
-
+/* funzione di utility per la stampa dei codici di errore inviati dal server in caso di 
+   fallimento */
 void print_err(char * str, int err) {
 	switch(err){
 		case err_server_busy:
 			fprintf(stderr, "[ERR]%s: server occupato, riprovare...\n", str);
-			/*forzatura per momenti atipici di sovraccarico (stress test), soluzioni
-			  meno brutali come un try again con timeout ancora non implementate */
-			exit(EXIT_FAILURE);
 			break;
 		case err_worker_busy:
 			fprintf(stderr, "[ERR]%s: worker occupati, operazione annullata\n", str);
-			/*forzatura per momenti atipici di sovraccarico (stress test), soluzioni
-			  meno brutali come un try again con timeout ancora non implementate 
-			exit(EXIT_FAILURE); */
 			break;
 		case err_memory_alloc: 
 			fprintf(stderr, "[ERR] %s: memory allocation\n", str);
@@ -549,9 +558,8 @@ void print_err(char * str, int err) {
 		case err_args_invalid:
 			fprintf(stderr, "[ERR] %s: valori input invalidi\n", str);
 			break;
-
 		default: 
-			fprintf(stderr, "[ERR] %s: errore server (solitamente macro)\n", str);
+			fprintf(stderr, "[ERR] %s: errore server (probabilmente macro)\n", str);
 			break;
 	}
 }

@@ -7,6 +7,7 @@
 #include <queue.h>
 #include <util.h>
 
+/* inizializzo la coda vuota */
 queue_t* init_queue(){
 
 	queue_t * q;
@@ -18,7 +19,7 @@ queue_t* init_queue(){
 	pthread_mutex_init(&q->qlock, NULL);
 	return q;
 }
-
+/* inserisco un elemento in fondo alla coda */
 char* q_put(queue_t *q, char *key) {
 
 	node_t * new;
@@ -40,7 +41,7 @@ char* q_put(queue_t *q, char *key) {
 	//printf("TEST: ho inserito nella coda: %s\n", new->tkey);
 	return new->tkey;
 }
-
+/* estraggo un elemento all'inizio della coda */
 void q_pull(queue_t *q, char *key) {
 
 	node_t *tmp;
@@ -55,8 +56,7 @@ void q_pull(queue_t *q, char *key) {
 
 	free(tmp);
 }
-
-//scorre la coda ed elimina il nodo richiesto se lo trova
+/* elimino un elemento specifico dalla coda preservando l'ordine */
 void q_remove(queue_t *q, char *key) {
 	//caso limite
 	if(isEmpty(q)) return;
@@ -94,8 +94,7 @@ void q_remove(queue_t *q, char *key) {
 		free(tmp);
 	}
 }
-
-//metto in fondo alla fila il nodo identificato da key
+/* sposto in fondo alla coda l'elemento richiesto */
 void q_bump(queue_t *q, char *key) {
 	//caso limite
 	if(isEmpty(q)) return;
@@ -134,7 +133,7 @@ void q_bump(queue_t *q, char *key) {
 		UNLOCK(&q->qlock);
 	}
 }
-
+/* dealloco gli elementi della coda e distruggo la coda stessa */
 void freeQueue(queue_t *q) {
 	if(isEmpty(q)) {
 		pthread_mutex_destroy(&q->qlock);

@@ -7,11 +7,12 @@
 #include <util.h>
 #include <mydata.h>
 
-
+/* lista non istanziabile, head e mutex trattate come
+   variabili globali */
 struct node *head = NULL;
-//forse serve una mutex per quando modifico la head
 pthread_mutex_t clist_mtx = PTHREAD_MUTEX_INITIALIZER;
 
+/* inserisco un nuovo elemento come in caso di una stack */
 void cleanuplist_ins(int id, char * data) {
    listnode_t * new = malloc(sizeof(listnode_t));
    if(new == NULL) {
@@ -27,7 +28,8 @@ void cleanuplist_ins(int id, char * data) {
    UNLOCK(&clist_mtx);
 }
 
-//puo' esistere una sola entry per key
+/* elimino l'elemento identificato da 'data', che nel nostro caso
+   e' la chiave della tabella quindi unico */
 int cleanuplist_del(char *data) {
    
    if(head == NULL) return -1;
@@ -65,19 +67,20 @@ int cleanuplist_del(char *data) {
    return -1;
 }
 
+/* estraggo dalla lista il primo elemento che trovo con 
+   'id' uguale */
 char * cleanuplist_getakey(int id) {
 
    listnode_t * curr;
    curr = head;
    while(curr != NULL && curr->id != id) 
          curr = curr->next;
-      
    if(curr != NULL) 
          return curr->ht_key;
-  
    return NULL;
 }
 
+/* dealloco tutti gli elementi della lista*/
 void cleanuplist_free(void) {
    LOCK(&clist_mtx);
    while(head != NULL) {

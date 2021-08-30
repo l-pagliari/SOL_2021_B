@@ -23,7 +23,6 @@ static void *workerpool_thread(void *threadpool) {
     pthread_t self = pthread_self();
     int myid = -1;
 
-    // non efficiente, si puo' fare meglio.....
     do {
 	for (int i=0;i<pool->numthreads;++i)
 	    if (pthread_equal(pool->threads[i], self)) {

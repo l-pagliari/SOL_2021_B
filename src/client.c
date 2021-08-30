@@ -1,4 +1,3 @@
-//#define _POSIX_C_SOURCE 2001112L
 #define _GNU_SOURCE
 #include <unistd.h>
 #include <stdio.h>
@@ -15,18 +14,21 @@
 #include <mydata.h>
 #include <api.h>
 
+/* variabili utilizzate per decidere quanto tempo
+   aspettare tra un tentativo di connesione e un altro;
+   ed un tempo massimo di attesa */
 #if !defined(MAX_WAIT_TIME_SEC)
-#define MAX_WAIT_TIME_SEC 5
+#define MAX_WAIT_TIME_SEC 4
 #endif
-
 #if !defined(RETRY_TIME_MS)
 #define RETRY_TIME_MS 500
 #endif
-
+/* flag per la stampa su stdout delle operazioni */
 int quiet = 1;	
 
-void usage(void);
-int makeDir(const char* dirname, char *path);
+/* prototipi */
+static void usage(void);
+static int makeDir(const char* dirname, char *path);
 
 int main(int argc, char *argv[]) {
 	
@@ -34,6 +36,7 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "input errato, usare -h per aiuto\n");
 		exit(EXIT_FAILURE);
     }
+    /* dichiarazione delle variabili usate per interagire con l'API */
 	int r;
     int connection_established = 0;
 	char opt;
@@ -47,9 +50,8 @@ int main(int argc, char *argv[]) {
     char rdpath[PATH_MAX];
     char wrpath[PATH_MAX];	
     
-    //char *append_buf;
-    //size_t append_len;
-
+    /* comunico con un socket, maschero SIGPIPE per evitare interruzioni
+       troppo brusche a seguito di chiusura connessione lato server */
     struct sigaction s;
     memset(&s,0,sizeof(s));    
     s.sa_handler=SIG_IGN;
@@ -58,14 +60,19 @@ int main(int argc, char *argv[]) {
     	exit(EXIT_FAILURE); 
     } 
 
-    while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:pa:")) != -1) {
+    /* utilizzo getopt per il parsing della command line, le richieste vengono 
+       eseguite nell'ordine in cui arrivano. Un alternativa e' usare sempre getopt
+       per i comandi ma inserire le richieste in una coda per poi al termine del parsing
+       estrare le richieste con un ordine di priorita'. Soluzione progettata ma non 
+       implementata per mancanza di tempo */
+	while((opt = getopt(argc, argv, ":hf:w:W:r:R:d:D:u:l:c:t:pa:")) != -1) {
     	switch(opt) {
-			
+			/* stampa modalita' d'uso */
 			case 'h': 
 				usage();
 				exit(EXIT_SUCCESS);
 				break;
-
+			/* abilito le stampe su stout delle operazioni con un flag globale */	
 			case 'p':
     			if(!quiet) {
     				fprintf(stderr, "input errato, usare -h per aiuto\n");
@@ -73,7 +80,8 @@ int main(int argc, char *argv[]) {
     			}
     			quiet = 0;
     			break;	
-
+    		/* provo a connettermi al socket, in caso di fallimento riprovo 
+    		   ad intervalli regolari fino ad un tempo massimo */
 			case 'f':
 				if(connection_established == 1) {
 					fprintf(stderr, "input errato, usare -h per aiuto\n");
@@ -95,7 +103,8 @@ int main(int argc, char *argv[]) {
 				if(!quiet) printf("[CLIENT] Aperta connessione con il server \n");
 				connection_established = 1;
 				break;
-			
+			/* richiesta di scrivere un file specifico sul server; lo apro, lo scrivo 
+			   in append e poi lo chiudo */
 			case 'W':
 				if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita, usare -h per aiuto\n");
@@ -111,7 +120,7 @@ int main(int argc, char *argv[]) {
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
 				break;
-
+			/* richiesta di leggere un file, se specificato lo salvo una volta letto */
 			case 'r':
 				if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita, usare -h per aiuto\n");
@@ -131,8 +140,7 @@ int main(int argc, char *argv[]) {
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);	
 				break;
-
-			//directory dove salvare localmente i file letti dal server
+			/* abilito il salvataggio locale dei file letti dal server nella directory input */
 			case 'd':
 				/*salvo in rdpath il path assoluto della directory passata in input
 				  se non esiste la creo */
@@ -144,8 +152,7 @@ int main(int argc, char *argv[]) {
 				read_dir = rdpath;
 				if(!quiet) fprintf(stdout, "[CLIENT] File letti verranno salvati nella cartella %s\n", read_dir);
 				break;
-
-			//directory dove salvare localmente i file espulsi dal server per capacity miss a seguto di una write
+			/* abilito il salvataggio locale dei file espulsi dal server per capacity miss */
 			case 'D':
 				/*salvo in wrpath il path assoluto della directory passata in input
 				  se non esiste la creo */
@@ -157,7 +164,7 @@ int main(int argc, char *argv[]) {
 				write_dir = wrpath;
 				if(!quiet) fprintf(stdout, "[CLIENT] File espulsi verranno salvati nella cartella %s\n", write_dir);
 				break;
-
+			/* scrivo fino a n file contenuti ricorsivamente nella directory input */
 			case 'w':
 				if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita\n");
@@ -175,14 +182,14 @@ int main(int argc, char *argv[]) {
                		break;
                	}
 				break;
-
+			/* leggo fino a n file a caso contenuti nel server e li salvo in read_dir */
 			case 'R':
 				if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita\n");
 					exit(EXIT_FAILURE);
 				}
 				//input nella forma n=7
-				if(isNumber(optarg+2, &val) == 0 && val >= 0) {
+				if(read_dir != NULL && isNumber(optarg+2, &val) == 0) {
 					readNFiles(val, read_dir);
 				}
 				else {
@@ -190,7 +197,7 @@ int main(int argc, char *argv[]) {
 					break;
                	}	
 				break;
-
+			/* richiesta di lock su file */
 			case 'l':
 				if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita\n");
@@ -203,7 +210,7 @@ int main(int argc, char *argv[]) {
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
 				break;
-			
+			/* richiesta di unlock su file */
 			case 'u':
 				if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita\n");
@@ -216,7 +223,7 @@ int main(int argc, char *argv[]) {
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
 				break;
-
+			/* richiesta di eliminare un file presente sul server */
 			case 'c':
 				if(connection_established == 0) {
 					fprintf(stderr, "connesione non stabilita\n");
@@ -229,7 +236,7 @@ int main(int argc, char *argv[]) {
 					token = strtok_r(NULL, ",", &save);
 				}while(token!=NULL);
 				break;
-
+			/* abilita il ritardo tra le richieste di un numero di millisecondi passato in input */
 			case 't':
 				//l'argomento e' il numero di millisecondi
 				if(isNumber(optarg, &val) == 0 && val >= 0) {
@@ -238,8 +245,7 @@ int main(int argc, char *argv[]) {
 				}
 				else fprintf(stderr, "input errato, usare -h per aiuto\n");
 				break;
-				
-			//getopt error handling manuale per gestire gli argomenti opzionali
+			/* getopt error handling manuale per gestire gli argomenti opzionali */
 			case '?': 
 				fprintf(stderr, "comando non riconosciuto: %c\n", (char)optopt);
 				break; 
@@ -249,6 +255,10 @@ int main(int argc, char *argv[]) {
 					if(connection_established == 0) {
 						fprintf(stderr, "connesione non stabilita\n");
 						exit(EXIT_FAILURE);
+					}
+					if( read_dir == NULL ) {
+						fprintf(stderr, "input errato, usare -h per aiuto\n");
+						break;
 					}
 					r = readNFiles(0, read_dir);
 				}
@@ -268,7 +278,8 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-void usage(void) {
+/* stampa su stdout un riassunto delle operazioni possibili */
+static void usage(void) {
 	printf("***LISTA DELLE OPZIONI ACCETTATE***\n\n"
 		"-f filename: \nspecifica il socket AF_UNIX a cui connettersi;\n\n"
 		"-w dirname[,n=0]: \ninvia al server i file nella cartella 'dirname'. Se contiene altre directory "
@@ -278,7 +289,8 @@ void usage(void) {
 		"-D dirname: directory dove scrivere i file espulsi dal server in seguito di capacity misses per "
 		"servire le scritture -w e -W; -D deve essere usata congiuntamente a -w o -W altrimenti genera errore;\n\n"
 		"-r file1[,file2]: \nlista di nomi di file da leggere dal server separati da ',';\n\n"
-		"-R [n=0]: \ntale opzione permette di leggere 'n' file qualsiasi attualmente memorizzati sul server; "
+		"-R [n=0]: \ntale opzione permette di leggere 'n' file qualsiasi attualmente memorizzati sul server "
+		"e salvarli nella directory specificata con -d; "
 		"se n=0 oppure e' omessa allora vengono letti tutti i file presenti sul server;\n\n"
 		"-d dirname: \ncartella in memoria secondaria dove scrivere tutti i file letti dal server con l'opzione "
 		"-r o -R; tale opzione va usata congiuntamente a quest'ultime altrimenti viene generato un errore;\n\n"
@@ -289,8 +301,10 @@ void usage(void) {
 		"-p: \nabilita le stampe sullo standard output per ogni operazione.\n\n"
 		"Gli argomenti possono essere ripetuti piu' volte (ad eccezione di '-f', '-h', '-p').\n");
 }
-
-int makeDir(const char* dirname, char *path){
+/* funzione di utility usata per assicurarsi che le directory passate in input esistono
+   e siano utilizzabili; se non esiste viene creata e restituisce in path il path assoluto
+   della directory passata in input */
+static int makeDir(const char* dirname, char *path){
 	//provo a creare la directory, se gia' esiste il file controllo che sia una directory
 	struct stat statbuf;
 	int unused, r;

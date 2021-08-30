@@ -8,21 +8,10 @@
 #include <util.h>
 #include <mydata.h>
 
-char timestr[11];
+/* utilizzata da ogni funzione per la scrittura del log */
+static char timestr[11];
 
-long max_saved_files;
-long max_reached_memory;
-long num_capacity_miss;
-
-queue_t * replace_queue;
-
-volatile int termina;
-volatile int hangup;
-volatile int clients;
-
-icl_hash_t * table;
-int req_pipe;
-
+/* prototipi delle funzioni per gestire le richieste */
 int handler_openfile(long fd, request_t * req);
 int handler_closefile(long fd, request_t * req);
 int handler_writefile(long fd, request_t * req); 
@@ -31,7 +20,6 @@ int handler_read_n_files(long fd, request_t * req);
 int handler_lockfile(long fd, request_t * req);
 int handler_unlockfile(long fd, request_t * req);
 int handler_removefile(long fd, request_t * req);
-
 int rimpiazzamento_fifo(long fd);
 int unlock_atexit(icl_hash_t * table, char * key);
 
@@ -40,8 +28,10 @@ void workerF(void *arg) {
 	long connfd = *(long*)arg;
 	request_t * req;
 	int r;
+	int busy = 0;
 	char * keyptr = NULL;
- 
+ 	/* il worker sa che c'e' una nuova richiesta pronta per essere letta, 
+ 	   la legge ed invia risposta dell'esito al client */
 	req = malloc(sizeof(request_t));
 	if(req == NULL) {
 		perror("malloc");
@@ -52,14 +42,14 @@ void workerF(void *arg) {
 		fprintf(stderr, "errore lettura richiesta client\n");
 		return;
 	}
-	int busy = 0;
 	if(writen(connfd, &busy, sizeof(int)) == -1) {
 		fprintf(stderr, "errore invio richiesta client\n");
 		return;
 	}
-
-		switch(req->type){
-			
+	/* ho letto la richiesta, la inoltro all'handler specifico se necessario */
+	switch(req->type){
+			/* il motivo dell'esplicitare l'apertura della connessione e' quello di conoscere
+			   l'identificativo del client che ha effettuato la connect */
 			case OPEN_CONNECTION:
 				LOCK(&logmtx);
 				fprintf(logfd, "%s[LOG] Opened connection (client %d)\n", tStamp(timestr), (int)req->cid);
@@ -67,24 +57,31 @@ void workerF(void *arg) {
 				if(write(req_pipe, &connfd, sizeof(long)) == -1) 
 					fprintf(stderr, "errore scrivendo nella request pipe");
     			break;
-    		
+    	/* la close connection ha due compiti particolari, assicurarsi che i file lockati dal client
+    	   vengano sbloccati e gestire il caso hang up */
 			case CLOSE_CONNECTION:
+				/* estraggo valori dalla lista degli elementi lockati che combaciano con l'id del client
+				   in chiusura, e li sblocco */
 				while((keyptr = cleanuplist_getakey(req->cid)) != NULL) {
 					unlock_atexit(table, keyptr);
 				}
 				clients--;
-    			close(connfd);
-    			LOCK(&logmtx);
-    			fprintf(logfd, "%s[LOG] Closed connection (client %d)\n", tStamp(timestr), (int)req->cid);
-    			UNLOCK(&logmtx);
-    			//se ho ricevuto hangup e questo era l'ultimo client attivo, lo notifico al server
-    			if(hangup == 1 && clients == 0) {
-    				printf("HANGUP: tutti i task sono terminati, chiudo\n");
-    				termina = 1;
-    				close(req_pipe);
-    			}
-				break;
+    		close(connfd);
+    		LOCK(&logmtx);
+    		fprintf(logfd, "%s[LOG] Closed connection (client %d)\n", tStamp(timestr), (int)req->cid);
+    		UNLOCK(&logmtx);
 
+    		/* gestione caso hang up: se il flag di hang up e' true e sto servendo l'ultimo client, e'
+    			 molto probabile che il manager sia bloccato sulla select quindi lo sveglio forzatamente */
+    		if(hangup == 1 && clients == 0) {
+    			//printf("HANGUP: tutti i task sono terminati, chiudo\n");
+    			termina = 1;
+    			close(req_pipe);
+    		}
+				break;
+			/* il resto delle richieste e' gestito in maniera default, viene chiamato l'handler corrispondente
+				 per la gestione, poi si comunica al client l'esito e si restituisce al manager il descrittore del
+				 client per nuove richieste attraverso la pipe */
 			case OPEN_FILE:
 				r = handler_openfile(connfd, req);
 				if(write(connfd, &r, sizeof(int)) == -1){
@@ -168,25 +165,19 @@ void workerF(void *arg) {
     			fprintf(stderr, "errore scrivendo nella request pipe\n");
     		}
 				break;
-			
-			/*case APPEND_FILE:
-    		handler_append(connfd, htab, req->filepath, req->cid);
-    		SYSCALL_EXIT("write", notused, write(req_pipe, &connfd, sizeof(long)), "scrivendo nella request pipe", "");
-    		break; */
-
-    	default: ;
+			default: ;
     }
     free(req);
 }
 
-/*ho deciso che se faccio open su un file gia' aperto va bene lo stesso,
-  mentre se ho il flag O_LOCK ed il file e' gia' lockato ritorno errore */
+/* apertura di un file in memoria; crea il file con il flag O_CREATE,
+	 fa la lock con il flaag O_LOCK */
 int handler_openfile(long fd, request_t * req) {
 
+	/* estraggo i valori utili dalla richiesta del client */
 	int id = req->cid;
 	int flag = req->arg;
 	file_t *data;
-
 	char *key = (char*)malloc(PATH_MAX*sizeof(char));
 	if(key == NULL) {
 		fprintf(stderr, "malloc key\n");
@@ -194,6 +185,7 @@ int handler_openfile(long fd, request_t * req) {
 	}
 	strncpy(key, req->filepath, PATH_MAX);
 
+	/* caso in cui devo creare un nuovo file in memoria */
 	if(flag == O_CREATE || flag == (O_CREATE|O_LOCK)) {	
 		//controllo che il file non esista gia'
 		if(icl_hash_find(table, key) != NULL) {
@@ -221,7 +213,6 @@ int handler_openfile(long fd, request_t * req) {
 		strncpy(data->file_name, bname, BUFSIZE);
 		data->file_name[len] = '\0';
 		free(tmp_str);
-		//cond usata per notificare che il file e' tornato disponibile
 		pthread_cond_init(&(data->cond), NULL);
 		//se occorre setto true il flag di lock del file
 		if(flag == (O_CREATE|O_LOCK)) {
@@ -255,6 +246,9 @@ int handler_openfile(long fd, request_t * req) {
 		}
 
 	}
+	/* caso in cui devo aprire un file esistente e lockarlo, non molto diverso dalla lock;
+		 ho interpretato questa sottile differenza ritornando errore in caso il file sia gia'
+		 lockato non aspettando l'unlock come fa l'operazione di unlock_file */
 	else if(flag == O_LOCK) {
 		//controllo che il file esista e sia sbloccato
 		data = icl_hash_find(table, key);
@@ -284,12 +278,11 @@ int handler_openfile(long fd, request_t * req) {
 		UNLOCK_RETURN(&logmtx, -1);
 		//devo ricordarmi da qualche parte che il file identificato da key e' stato lockato da id
 		cleanuplist_ins(id, key);
-		
 		free(key);
 	}
-	/* nella mia implementazione non ho trovato un uso particolare di open file senza flag, ho
-	   comunque implementato l'opzione per completezza */
-	else { 
+	/* ho deciso che se faccio open su un file gia' aperto va bene lo stesso,
+     mentre se ho il flag O_LOCK ed il file e' gia' lockato ritorno errore */
+ 	else { 
 		data = icl_hash_find(table, key);
 		if(data == NULL) {
 			//fprintf(stderr, "[SERVER] Errore: file non presente in memoria\n");
@@ -306,7 +299,8 @@ int handler_openfile(long fd, request_t * req) {
 	}
 	return 0;			
 }
-
+/* chiudo il file richiesto, se il file da chiudere esiste ed e' gia' chiuso, 
+	 non lo considero un errore */
 int handler_closefile(long fd, request_t * req) {
 
 	char *key = req->filepath;
@@ -317,7 +311,7 @@ int handler_closefile(long fd, request_t * req) {
 		fprintf(stderr, "[SERVER] Errore: file da chiudere non trovato\n");
 		return err_file_notexist;
 	}
-	//se il file da chiudere e' gia' chiuso, non lo considero un errore
+	//se il file da chiudere e' gia' chiuso, va bene
 	if(data->open_flag == 0) return 0;
 	LOCK_RETURN(&(table->lock), -1);
 	data->open_flag = 0;
@@ -329,6 +323,8 @@ int handler_closefile(long fd, request_t * req) {
 	return 0;
 }
 
+/* scrivo il file richiesto in memoria, in caso di mancanza di spazio
+	 utilizzo una subroutine per gestire il caso di capacity miss */
 int handler_writefile(long fd, request_t * req) {
 
 	file_t *data;
@@ -353,7 +349,6 @@ int handler_writefile(long fd, request_t * req) {
 	}
 	//comunico al client che puo' inviare il file
 	SYSCALL_RETURN("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
-
 	//leggo prima la dimensione del file e poi il file
 	SYSCALL_RETURN("read", ret, readn(fd, &fsize, sizeof(size_t)), "leggendo dati dal client", "");
 	buf = malloc(fsize);
@@ -362,7 +357,6 @@ int handler_writefile(long fd, request_t * req) {
 		return err_memory_alloc;
 	}
 	SYSCALL_RETURN("read", ret, readn(fd, buf, fsize), "leggendo dati dal client", "");
-
 	//Controllo memoria
 	if(fsize > MAX_CAP) {
 		//fprintf(stderr, "[SERVER] Errore: file troppo grande\n");
@@ -396,7 +390,6 @@ int handler_writefile(long fd, request_t * req) {
 	UNLOCK_RETURN(&storemtx, -1);
 	num_write++;
 	all_write+=fsize;
-
 	//comunico al client che c'e' abbastanza spazio per scrivere il file
 	SYSCALL_RETURN("write", ret, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
 	//posso ora scrivere il contenuto del buffer nel file
@@ -416,6 +409,9 @@ int handler_writefile(long fd, request_t * req) {
 	return 0;
 }
 
+/* leggo un file in memoria e, se esiste, invio size e contenuto al client;
+	 leggendo un file si considera "usato" e perde priorita' nella coda espulsione
+	 per capacity miss(LRU) */
 int handler_readfile(long fd, request_t * req) {
 
 	file_t *data;
@@ -434,6 +430,10 @@ int handler_readfile(long fd, request_t * req) {
 	SYSCALL_RETURN("write", ret, writen(fd, &(data->file_size), sizeof(size_t)), "inviando dati al client", "");
 	SYSCALL_RETURN("write", ret, writen(fd, data->contenuto, data->file_size), "inviando dati al client", "");
 	UNLOCK_RETURN(&(table->lock), -1);
+	/* IMPORTANTE: questa funzione abilita' la funzione LRU dell'algoritmo di rimpiazzamento, 
+		 conto un file letto come "usato" quindi lo metto in fondo alla coda dei file salvati per
+		 decidere chi espellere in seguito ad un capacity miss - se ho bisogno di una coda FIFO basta
+		 eliminare questa chiamata*/
 	q_bump(replace_queue, key);
 	
 	LOCK_RETURN(&logmtx, -1);
@@ -444,89 +444,22 @@ int handler_readfile(long fd, request_t * req) {
 	return 0;
 } 
 
-int unlock_atexit(icl_hash_t * table, char * key) {
+/* gestione del caso in cui il client vuole leggere n files a caso */
+int handler_read_n_files(long fd, request_t * req) {
 
-	file_t *data;
-	data = icl_hash_find(table, key);
-	//dovrebbe essere presente ma controllo per sicurezza
-	if(data != NULL) {
-		LOCK_RETURN(&(table->lock), -1);
-		data->lock_flag = 0;
-		data->locked_by = -1;
-		SIGNAL(&data->cond);	//se c'e' un altro worker in attesa del file lo avverto
-		UNLOCK_RETURN(&(table->lock), -1);
-
-		LOCK_RETURN(&logmtx, -1);
-		fprintf(logfd, "%s[LOG] Unlocked file (at exit) %s\n", tStamp(timestr), (char*)key);
-		UNLOCK_RETURN(&logmtx, -1);
-	} else return -1;
-	cleanuplist_del(key);
-	return 0;
-}
-
-//libera num bytes dalla tabella politica fifo inviando le entries eliminate al file descriptor
-int rimpiazzamento_fifo(long fd) {
-
-		char key[PATH_MAX];
-		file_t *data;
-		size_t name_len, size;
-		int unused, r, retval = 1;
-		char synch;
-
-		//invio al client il valore che indica la situazione di capacity miss
-		SYSCALL_RETURN("write", unused, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
-		//estraggo la chiave dall'ultimo elemento dalla coda, che viene salvata in key
-		q_pull(replace_queue, key);
-		data = icl_hash_find(table, key);
-		
-		name_len = strlen(data->file_name);
-		size = data->file_size;
-		//invio il nome del file
-		SYSCALL_RETURN("write", unused, writen(fd, &name_len, sizeof(size_t)), "inviando dati al client", "");
-		SYSCALL_RETURN("write", unused, writen(fd, data->file_name, name_len), "inviando dati al client", "");
-		//invio il contenuto
-		SYSCALL_RETURN("write", unused, writen(fd, &data->file_size, sizeof(size_t)), "inviando dati al client", "");
-		SYSCALL_RETURN("write", unused, writen(fd, data->contenuto, data->file_size), "inviando dati al client", "");
-		//leggo un byte per sapere che il client ha ricevuto il file
-		SYSCALL_RETURN("read", unused, read(fd, &synch, 1), "leggendo dati dal client", "");
-
-		//toglo l'elemento rimosso dalla lista di cleanup
-		cleanuplist_del(key);
-		//rimuovo il file dalla memoria
-		LOCK_RETURN(&(table->lock), -1);
-		r = icl_hash_delete(table, key, &free, &freeFile);
-		UNLOCK_RETURN(&(table->lock), -1);
-		if(r == -1) return err_storage_fault;
-		
-		LOCK_RETURN(&logmtx, -1);
-		fprintf(logfd, "%s[LOG] CAPACITY MISS: Removed file %s (%ld Bytes)\n", tStamp(timestr), key, size);
-		UNLOCK_RETURN(&logmtx, -1);
-
-		//aggiorno i valori
-		LOCK_RETURN(&storemtx, -1); 
-		CUR_CAP = CUR_CAP - size;
-		CUR_FIL--;
-		UNLOCK_RETURN(&storemtx, -1);
-		return 0;
-}
-
-int handler_read_n_files(long fd, request_t * req) { 
+	if(table->nentries == 0) 	return err_file_notexist; //caso limite
 
 	int N = req->arg;
 	void **file_array = NULL;
 	int unused, num, i;
 	int end = 0;
-	/*il client mi chiede di leggere al piu' N file casuali dal server,
-		sfrutto il fatto che conosco a priori il numero di file salvati */
-
-	if(table->nentries == 0) 	return err_file_notexist; //caso limite
-		
-	/*due casi possibili:
-		1. N==0 o N>=entries --> devo leggere tutti i file contenuti in memoria
-		2. N<entries 		     --> devo leggere N file a caso dalla memoria */
-	if(N == 0 || (N > table->nentries)) num = table->nentries;
+	/* sfrutto il fatto che conosco a priori il numero di file salvati,
+		 due casi possibili:
+		 1. N==0 o N>=entries --> devo leggere tutti i file contenuti in memoria
+		 2. N<entries 		     --> devo leggere N file a caso dalla memoria */
+	if(N <= 0 || (N > table->nentries)) num = table->nentries;
 	else num = N;
-	//alloco l'array di puntatori a file
+	//alloco un array di puntatori a file
 	file_array = malloc(num*sizeof(void*));
 	if(file_array == NULL) {
 		//perror("malloc");
@@ -551,7 +484,7 @@ int handler_read_n_files(long fd, request_t * req) {
 	   Altrimenti posso usare una lunga lock sulla tabella per la durata dell'invio dei file, ma anche
 	   questa soluzione comporta diversi problemi come il lungo tempo della lock e il problema nel caso
 	   le write fallissero e non potrei fare la unlock. Per il momento in cerca di soluzioni migliori 
-	   spero nel non verificarsi dello scenario critico, che e' comunque non comune */
+	   spero nel non verificarsi dello scenario critico, che e' comunque raro */
 
 	//posso inviare i file al client
 	file_t * newfile;
@@ -574,7 +507,6 @@ int handler_read_n_files(long fd, request_t * req) {
 		UNLOCK_RETURN(&logmtx, -1);
 		num_read++;
 	  all_read+=newfile->file_size;
-
 		//leggo un byte per sapere che il client ha ricevuto il file
 		SYSCALL_RETURN("read", unused, read(fd, &synch, 1), "leggendo dati dal client", "");
 	}
@@ -584,6 +516,8 @@ int handler_read_n_files(long fd, request_t * req) {
 	return 0;
 }
 
+/* blocco un file esistente in memoria, se e' gia' bloccato da un altro client
+	 ne attendo la liberazione */
 int handler_lockfile(long fd, request_t * req) {
 	int id = req->cid;
 	char *key = req->filepath;
@@ -635,6 +569,9 @@ int handler_lockfile(long fd, request_t * req) {
 	return 0;
 }
 
+/* sblocca un file gia' bloccato presente in memoria;
+	 comunica attraverso una variabile di condizione associata ad ogni
+	 file che e' stato sbloccato per svegliare eventuali lock in attesa */
 int handler_unlockfile(long fd, request_t * req) {
 
 	int id = req->cid;
@@ -646,7 +583,6 @@ int handler_unlockfile(long fd, request_t * req) {
 		//printf("[SERVER] file non trovato\n");
 		return err_file_notexist;
 	}
-
 	/*L’operazione ha successo solo se l’owner della lock è il processo che ha richiesto l’operazione
 	  altrimenti l’operazione termina con errore.*/
 	if(data->locked_by == id) {
@@ -669,9 +605,11 @@ int handler_unlockfile(long fd, request_t * req) {
 	return 0;
 }
 
+/* rimuovo un file presente in memoria e libero la memoria allocata 
+	 l’operazione fallisce se il file non è in stato locked, o è in stato 
+	 locked da parte di un processo client diverso da chi effettua la remove */
 int handler_removefile(long fd, request_t * req) {
-	/*L’operazione fallisce se il file non è in stato locked, o è in
-	  stato locked da parte di un processo client diverso da chi effettua la removeFile */
+	
 	int id = req->cid;
 	char *key = req->filepath;
 	file_t *data;
@@ -713,7 +651,72 @@ int handler_removefile(long fd, request_t * req) {
 	return err_file_notlocked;
 }
 
+/* gestione del caso di capacity miss: tolgo un valore dalla coda (LRU) di file
+	 in ordine per l'espulsione ed invio il file cosi' rimosso al client;
+	 una chiamata per ogni file da espellere */
+int rimpiazzamento_fifo(long fd) {
 
-/* TO DO:
- -append per completezza
-*/
+		char key[PATH_MAX];
+		file_t *data;
+		size_t name_len, size;
+		int unused, r, retval = 1;
+		char synch;
+
+		//invio al client il valore che indica la situazione di capacity miss
+		SYSCALL_RETURN("write", unused, writen(fd, &retval, sizeof(int)), "inviando dati al client", "");
+		//estraggo la chiave dall'ultimo elemento dalla coda, che viene salvata in key
+		q_pull(replace_queue, key);
+		data = icl_hash_find(table, key);
+		name_len = strlen(data->file_name);
+		size = data->file_size;
+		//invio il nome del file
+		SYSCALL_RETURN("write", unused, writen(fd, &name_len, sizeof(size_t)), "inviando dati al client", "");
+		SYSCALL_RETURN("write", unused, writen(fd, data->file_name, name_len), "inviando dati al client", "");
+		//invio il contenuto
+		SYSCALL_RETURN("write", unused, writen(fd, &data->file_size, sizeof(size_t)), "inviando dati al client", "");
+		SYSCALL_RETURN("write", unused, writen(fd, data->contenuto, data->file_size), "inviando dati al client", "");
+		//leggo un byte per sapere che il client ha ricevuto il file
+		SYSCALL_RETURN("read", unused, read(fd, &synch, 1), "leggendo dati dal client", "");
+
+		//toglo l'elemento rimosso dalla lista di cleanup
+		cleanuplist_del(key);
+		//rimuovo il file dalla memoria
+		LOCK_RETURN(&(table->lock), -1);
+		r = icl_hash_delete(table, key, &free, &freeFile);
+		UNLOCK_RETURN(&(table->lock), -1);
+		if(r == -1) return err_storage_fault;
+		
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] CAPACITY MISS: Removed file %s (%ld Bytes)\n", tStamp(timestr), key, size);
+		UNLOCK_RETURN(&logmtx, -1);
+		//aggiorno i valori
+		LOCK_RETURN(&storemtx, -1); 
+		CUR_CAP = CUR_CAP - size;
+		CUR_FIL--;
+		UNLOCK_RETURN(&storemtx, -1);
+		return 0;
+}
+
+/* funzione non richiesta dalla specifica ma utile per il testing e per 
+	 l'uso del programma: alla fine delle richieste di un client, sblocco automaticamente
+	 i file che aveva lockato quel client - in caso si voglia eliminare occorre anche usare
+	 un identificativo per i client diverso dal pid */
+int unlock_atexit(icl_hash_t * table, char * key) {
+
+	file_t *data;
+	data = icl_hash_find(table, key);
+	//dovrebbe essere presente ma controllo per sicurezza
+	if(data != NULL) {
+		LOCK_RETURN(&(table->lock), -1);
+		data->lock_flag = 0;
+		data->locked_by = -1;
+		SIGNAL(&data->cond);	//se c'e' un altro worker in attesa del file lo avverto
+		UNLOCK_RETURN(&(table->lock), -1);
+
+		LOCK_RETURN(&logmtx, -1);
+		fprintf(logfd, "%s[LOG] Unlocked file (at exit) %s\n", tStamp(timestr), (char*)key);
+		UNLOCK_RETURN(&logmtx, -1);
+	} else return -1;
+	cleanuplist_del(key);
+	return 0;
+}

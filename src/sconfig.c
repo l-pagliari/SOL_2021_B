@@ -63,7 +63,7 @@ config_t * read_config(char * conf_path) {
 	}
 	free(buffer);
 	fclose(fp);
-
+	
 	//creo in ordine la struct config
 	//SOCKET NAME (i=0)
 	n = strlen(bufptr[0]);

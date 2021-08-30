@@ -290,6 +290,11 @@ int icl_hash_destroy(icl_hash_t *ht, void (*free_key)(void*), void (*free_data)(
     return 0;
 }
 
+/*  restituisce un array di n indirizzi di file
+**  @param ht -- la tabella da cui prendere gli indirizzi
+**  @param n -- il numero di indirizzi da salvare
+**  @param data_arr -- array gia' allocato su cui salvare gli indirizzi
+*/
 int get_n_entries( icl_hash_t *ht, int n, void ** data_arr) {
 
     icl_entry_t *bucket, *curr;

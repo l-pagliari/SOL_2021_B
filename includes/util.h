@@ -188,7 +188,8 @@ static inline int isDot(const char dir[]) {
     return 0;
 }
 
-/* msleep(): Sleep for the requested number of milliseconds. */
+/*  @brief: dorme per il numero richiesto di millisecondi 
+*/
 static inline int msleep(long msec)
 {
     struct timespec ts;
@@ -204,7 +205,5 @@ static inline int msleep(long msec)
     }while(res && errno == EINTR);
     return res;
 }
-
-
 
 #endif /* UTIL_H */
