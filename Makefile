@@ -72,9 +72,9 @@ test2		: 	cleantest
 	@echo [FINE TEST 2]
 
 test3		: 	cleantest
-	@echo [INIZIO TEST 2]
+	@echo [INIZIO TEST 3]
 	bash script/test3.sh
-	@echo [FINE TEST 2]
+	@echo [FINE TEST 3]
 
 cleantest	:
 	rm -f test/expelled/* test/readsave/*
